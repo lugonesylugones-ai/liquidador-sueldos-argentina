@@ -35,6 +35,34 @@ CATEGORIAS_COMERCIO = [
 ]
 
 
+# Cómo aparecen las categorías en circulares y escalas publicadas.
+_PREFIJOS = {
+    "personal auxiliar especializado": "Auxiliar Especializado",
+    "auxiliar especializado": "Auxiliar Especializado",
+    "personal auxiliar": "Auxiliar",
+    "auxiliares": "Auxiliar",
+    "auxiliar": "Auxiliar",
+    "vendedores": "Vendedor",
+    "vendedor": "Vendedor",
+    "cajeros": "Cajero",
+    "cajero": "Cajero",
+    "administrativos": "Administrativo",
+    "administrativo": "Administrativo",
+    "maestranza": "Maestranza",
+}
+
+
+def normalizar_categoria(texto) -> str | None:
+    """'Personal Auxiliar B', 'VENDEDORES  A', 'Cajeros \"C\"' -> nombre del CCT, o None."""
+    limpio = " ".join(str(texto or "").replace('"', " ").replace("'", " ").lower().split())
+    for prefijo, nombre in _PREFIJOS.items():
+        if limpio.startswith(prefijo + " "):
+            letra = limpio[len(prefijo):].strip().upper()
+            candidato = f"{nombre} {letra}"
+            return candidato if candidato in CATEGORIAS_COMERCIO else None
+    return None
+
+
 @dataclass
 class FilaEscala:
     categoria: str
@@ -146,7 +174,6 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
         res.errores.append(f"Encabezado esperado {COLUMNAS}, se encontró {encabezado}")
         return res
 
-    categorias_validas = {c.lower(): c for c in CATEGORIAS_COMERCIO}
     vistos = set()
     for n, fila in enumerate(ws.iter_rows(min_row=2, max_col=4, values_only=True), start=2):
         fila = tuple(fila) + (None,) * (4 - len(fila))
@@ -154,7 +181,7 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
             continue
         cat_raw, monto_raw, vig_raw, no_rem_raw = fila
         errores_fila = []
-        cat = categorias_validas.get(str(cat_raw or "").strip().lower())
+        cat = normalizar_categoria(cat_raw)
         if cat is None:
             errores_fila.append(f"categoría desconocida {cat_raw!r}")
         try:

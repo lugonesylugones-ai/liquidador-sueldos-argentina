@@ -4,7 +4,9 @@ from io import BytesIO
 
 from openpyxl import Workbook
 
-from backend.escalas import COLUMNAS, leer_plantilla
+import pytest
+
+from backend.escalas import COLUMNAS, leer_plantilla, normalizar_categoria
 from tests.conftest import subir
 
 
@@ -105,3 +107,16 @@ def test_columna_no_remunerativo_opcional():
 def test_plantilla_vieja_de_tres_columnas_sigue_funcionando():
     res = leer_plantilla(xlsx([["Vendedor A", 1000, "01/07/2026"]], encabezado=COLUMNAS[:3]))
     assert res.ok and res.filas[0].no_remunerativo == D("0")
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    ("Personal Auxiliar B", "Auxiliar B"),
+    ("Auxiliar especializado A", "Auxiliar Especializado A"),
+    ("VENDEDORES  D", "Vendedor D"),
+    ('Cajeros "B"', "Cajero B"),
+    ("administrativo f", "Administrativo F"),
+    ("Vendedor E", None),
+    ("Gerente A", None),
+])
+def test_normaliza_nombres_de_categoria(texto, esperado):
+    assert normalizar_categoria(texto) == esperado

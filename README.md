@@ -44,7 +44,8 @@ python scripts/generar_ejemplo.py   # genera ejemplos/recibo_ejemplo.pdf
 | Jornada parcial | Obra social sobre el equivalente a jornada completa y "Compl. Art. 101" |
 | Redondeo | El neto se redondea para arriba al peso; la diferencia va como no remunerativo |
 
-`tests/test_recibos_reales.py` reproduce al centavo tres recibos reales de septiembre 2026.
+`tests/test_recibos_reales.py` reproduce al centavo ocho recibos reales de julio a septiembre 2026.
+`ejemplos/escala_comercio_sep2026.xlsx` trae la escala de septiembre 2026 (fuente: Ignacio Online, no la circular de FAECYS) lista para importar.
 
 El recibo incluye los datos que exige el art. 140 LCT (empleador, trabajador, categoría,
 fecha de ingreso, determinación de cada concepto, último depósito de aportes, totales,
