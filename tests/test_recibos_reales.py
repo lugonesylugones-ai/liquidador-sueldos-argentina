@@ -48,3 +48,35 @@ def test_reproduce_recibo_real(nombre):
     assert {c.codigo: str(c.importe) for c in liq.conceptos} == caso["esperado"]
     assert (str(liq.total_remunerativo), str(liq.total_no_remunerativo),
             str(liq.total_descuentos), str(liq.neto)) == caso["totales"]
+
+
+# Julio y agosto 2026: se comparan totales (remunerativo, no rem., descuentos, neto).
+# A = 8 hs, ingreso 03/07/2017; B = 8 hs, ingreso 01/09/2022; C = 4 hs, ingreso 20/12/2004.
+INGRESOS = {"A": (date(2017, 7, 3), 8), "B": (date(2022, 9, 1), 8), "C": (date(2004, 12, 20), 4)}
+ESCALAS_MES = {
+    "2026-07": D("1161573"),
+    "2026-08": D("1185469"),
+}
+TOTALES_JUL_AGO = [
+    ("A", "2026-07", ("1371581.91", "166696.38", "307392.29", "1230886.00")),
+    ("B", "2026-07", ("1296081.99", "158896.84", "290574.83", "1164404.00")),
+    ("A", "2026-08", ("1399798.24", "166696.57", "313458.81", "1253036.00")),
+    ("B", "2026-08", ("1322745.12", "158896.27", "296307.39", "1185334.00")),
+    ("C", "2026-08", ("776952.89", "91148.08", "217285.97", "650815.00")),
+]
+
+
+@pytest.mark.parametrize("empleado,periodo,totales", TOTALES_JUL_AGO)
+def test_reproduce_totales_julio_agosto(empleado, periodo, totales):
+    ingreso, horas = INGRESOS[empleado]
+    basico = ESCALAS_MES[periodo]
+    if horas == 4:
+        # El sistema actual tenía la categoría de 4 hs cargada a mano en 592.735,00
+        # (la mitad exacta es 592.734,50); se replica para comparar.
+        basico = D("1185470")
+    liq = liquidar_comercio(periodo=periodo, categoria="Auxiliar B", basico=basico,
+                            no_remunerativo=D("120000"), vigencia_escala=date(2026, 7, 1),
+                            fecha_ingreso=ingreso, jornada_horas=horas,
+                            asignacion_extraordinaria=D("25000"))
+    assert (str(liq.total_remunerativo), str(liq.total_no_remunerativo),
+            str(liq.total_descuentos), str(liq.neto)) == totales
