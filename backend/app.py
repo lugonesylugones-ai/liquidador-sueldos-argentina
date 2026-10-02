@@ -42,6 +42,16 @@ def _periodo(datos: dict) -> str:
     return periodo
 
 
+def _decimal_opcional(datos: dict, campo: str) -> Decimal | None:
+    valor = datos.get(campo)
+    if valor in (None, ""):
+        return None
+    try:
+        return Decimal(str(valor))
+    except InvalidOperation:
+        raise ErrorDatos(f"'{campo}' tiene que ser un número")
+
+
 def create_app(config: dict | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -84,7 +94,7 @@ def create_app(config: dict | None = None) -> Flask:
     @app.get("/escalas")
     def listar_escalas():
         rows = dbmod.get_db().execute(
-            "SELECT categoria, monto, vigencia_desde FROM escalas WHERE convenio = ? "
+            "SELECT categoria, monto, vigencia_desde, no_remunerativo FROM escalas WHERE convenio = ? "
             "ORDER BY vigencia_desde DESC, categoria", (CONVENIO_COMERCIO,)).fetchall()
         return jsonify([dict(r) for r in rows])
 
@@ -105,13 +115,18 @@ def create_app(config: dict | None = None) -> Flask:
         empresa_id = _requerido(d, "empresa_id")
         if conn.execute("SELECT 1 FROM empresas WHERE id = ?", (empresa_id,)).fetchone() is None:
             raise ErrorDatos("La empresa no existe")
+        try:
+            jornada = int(d.get("jornada_horas", 8))
+        except (TypeError, ValueError):
+            raise ErrorDatos("'jornada_horas' tiene que ser un entero")
+        if not 1 <= jornada <= 8:
+            raise ErrorDatos("'jornada_horas' tiene que estar entre 1 y 8")
         cur = conn.execute(
             """INSERT INTO empleados (empresa_id, apellido, nombre, cuil, categoria,
-                                      fecha_ingreso, afiliado_sindicato)
+                                      fecha_ingreso, jornada_horas)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (empresa_id, _requerido(d, "apellido"), _requerido(d, "nombre"), _requerido(d, "cuil"),
-             _requerido(d, "categoria"), _fecha(d, "fecha_ingreso").isoformat(),
-             1 if d.get("afiliado_sindicato") else 0))
+             _requerido(d, "categoria"), _fecha(d, "fecha_ingreso").isoformat(), jornada))
         conn.commit()
         return jsonify(id=cur.lastrowid), 201
 
@@ -127,17 +142,16 @@ def create_app(config: dict | None = None) -> Flask:
         escala = basico_vigente(conn, emp["categoria"], primer_dia(periodo), emp["convenio"])
         if escala is None:
             raise ErrorDatos(f"No hay escala cargada para {emp['categoria']} vigente en {periodo}")
-        tope = d.get("tope_base_imponible")
-        try:
-            tope = Decimal(str(tope)) if tope not in (None, "") else None
-        except InvalidOperation:
-            raise ErrorDatos("'tope_base_imponible' tiene que ser un número")
+        tope = _decimal_opcional(d, "tope_base_imponible")
+        extraordinaria = _decimal_opcional(d, "asignacion_extraordinaria") or Decimal("0")
         try:
             liq = liquidar_comercio(
                 periodo=periodo, categoria=emp["categoria"], basico=escala.monto,
+                no_remunerativo=escala.no_remunerativo,
                 vigencia_escala=escala.vigencia_desde,
                 fecha_ingreso=date.fromisoformat(emp["fecha_ingreso"]),
-                afiliado_sindicato=bool(emp["afiliado_sindicato"]),
+                jornada_horas=emp["jornada_horas"],
+                asignacion_extraordinaria=extraordinaria,
                 inasistencias_injustificadas=int(d.get("inasistencias_injustificadas", 0)),
                 tope_base_imponible=tope)
         except ValueError as exc:

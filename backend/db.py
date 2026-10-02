@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS escalas (
     categoria TEXT NOT NULL,
     monto TEXT NOT NULL,              -- Decimal guardado como texto
     vigencia_desde TEXT NOT NULL,     -- YYYY-MM-DD
+    no_remunerativo TEXT NOT NULL DEFAULT '0',
     UNIQUE (convenio, categoria, vigencia_desde)
 );
 
@@ -28,7 +29,7 @@ CREATE TABLE IF NOT EXISTS empleados (
     convenio TEXT NOT NULL DEFAULT 'CCT 130/75',
     categoria TEXT NOT NULL,
     fecha_ingreso TEXT NOT NULL,      -- YYYY-MM-DD
-    afiliado_sindicato INTEGER NOT NULL DEFAULT 0
+    jornada_horas INTEGER NOT NULL DEFAULT 8 CHECK (jornada_horas BETWEEN 1 AND 8)
 );
 
 CREATE TABLE IF NOT EXISTS liquidaciones (

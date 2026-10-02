@@ -1,10 +1,12 @@
 """Carga de escalas salariales desde la plantilla Excel propia.
 
-La plantilla tiene una hoja "Escala" con tres columnas:
-    Categoría | Monto | Vigencia desde
+La plantilla tiene una hoja "Escala" con estas columnas:
+    Categoría | Monto | Vigencia desde | No remunerativo
 
 Cada fila es el básico mensual de jornada completa de una categoría a partir
-de una fecha. Para cargar un nuevo acuerdo se agregan filas con la nueva
+de una fecha, y la suma no remunerativa del acuerdo para ese mes (opcional,
+vacía = 0). Así se cargan las circulares de FAECYS, que traen por categoría y
+por mes el básico y el "aumento no remunerativo". Para cargar un nuevo acuerdo se agregan filas con la nueva
 vigencia; las anteriores quedan como historial.
 """
 from dataclasses import dataclass, field
@@ -18,7 +20,8 @@ from openpyxl.styles import Font, PatternFill
 
 CONVENIO_COMERCIO = "CCT 130/75"
 HOJA = "Escala"
-COLUMNAS = ("Categoría", "Monto", "Vigencia desde")
+COLUMNAS = ("Categoría", "Monto", "Vigencia desde", "No remunerativo")
+COLUMNAS_OBLIGATORIAS = COLUMNAS[:3]
 
 # Categorías del CCT 130/75 (art. 5 y siguientes).
 CATEGORIAS_COMERCIO = [
@@ -37,6 +40,7 @@ class FilaEscala:
     categoria: str
     monto: Decimal
     vigencia_desde: date
+    no_remunerativo: Decimal = Decimal("0")
 
 
 @dataclass
@@ -61,18 +65,25 @@ def generar_plantilla(ejemplo: dict | None = None, vigencia: date | None = None)
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 18
     vigencia = vigencia or date.today().replace(day=1)
     for cat in CATEGORIAS_COMERCIO:
-        monto = (ejemplo or {}).get(cat)
-        ws.append([cat, float(monto) if monto is not None else None, vigencia])
+        valor = (ejemplo or {}).get(cat)
+        # `ejemplo` acepta {cat: monto} o {cat: (monto, no_remunerativo)}
+        monto, no_rem = valor if isinstance(valor, tuple) else (valor, None)
+        ws.append([cat, float(monto) if monto is not None else None, vigencia,
+                   float(no_rem) if no_rem is not None else None])
         ws.cell(row=ws.max_row, column=2).number_format = "#,##0.00"
         ws.cell(row=ws.max_row, column=3).number_format = "DD/MM/YYYY"
+        ws.cell(row=ws.max_row, column=4).number_format = "#,##0.00"
 
     ayuda = wb.create_sheet("Instrucciones")
     for linea in (
         "Completá la hoja 'Escala' con el básico mensual (jornada completa) de cada categoría.",
         "Monto: número sin símbolo $. Se aceptan decimales.",
         "Vigencia desde: fecha a partir de la cual rige el monto (DD/MM/AAAA).",
+        "No remunerativo: suma no remunerativa del acuerdo para ese mes y categoría, jornada completa. Vacío = 0.",
+        "Si el acuerdo cambia la suma no remunerativa mes a mes, cargá una fila por mes.",
         "Para un acuerdo nuevo, agregá filas con la nueva vigencia; no borres las anteriores.",
         "Las categorías tienen que coincidir con las del CCT 130/75 listadas en la plantilla.",
     ):
@@ -99,7 +110,7 @@ def _parse_fecha(valor) -> date:
     raise ValueError(f"fecha inválida: {valor!r}")
 
 
-def _parse_monto(valor) -> Decimal:
+def _parse_monto(valor, permitir_cero: bool = False) -> Decimal:
     if isinstance(valor, (int, float)):
         monto = Decimal(str(valor))
     elif isinstance(valor, str):
@@ -113,7 +124,7 @@ def _parse_monto(valor) -> Decimal:
             raise ValueError(f"monto inválido: {valor!r}")
     else:
         raise ValueError(f"monto inválido: {valor!r}")
-    if monto <= 0:
+    if monto < 0 or (monto == 0 and not permitir_cero):
         raise ValueError(f"el monto tiene que ser mayor a cero: {valor!r}")
     return monto.quantize(Decimal("0.01"))
 
@@ -130,17 +141,18 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
         res.errores.append(f"Falta la hoja '{HOJA}'")
         return res
     ws = wb[HOJA]
-    encabezado = tuple((c.value or "").strip() if isinstance(c.value, str) else c.value for c in ws[1][:3])
-    if encabezado != COLUMNAS:
+    encabezado = tuple((c.value or "").strip() if isinstance(c.value, str) else c.value for c in ws[1][:4])
+    if encabezado[:3] != COLUMNAS_OBLIGATORIAS or (len(encabezado) == 4 and encabezado[3] not in (None, COLUMNAS[3])):
         res.errores.append(f"Encabezado esperado {COLUMNAS}, se encontró {encabezado}")
         return res
 
     categorias_validas = {c.lower(): c for c in CATEGORIAS_COMERCIO}
     vistos = set()
-    for n, fila in enumerate(ws.iter_rows(min_row=2, max_col=3, values_only=True), start=2):
+    for n, fila in enumerate(ws.iter_rows(min_row=2, max_col=4, values_only=True), start=2):
+        fila = tuple(fila) + (None,) * (4 - len(fila))
         if all(v is None or (isinstance(v, str) and not v.strip()) for v in fila):
             continue
-        cat_raw, monto_raw, vig_raw = fila
+        cat_raw, monto_raw, vig_raw, no_rem_raw = fila
         errores_fila = []
         cat = categorias_validas.get(str(cat_raw or "").strip().lower())
         if cat is None:
@@ -153,6 +165,12 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
             vigencia = _parse_fecha(vig_raw)
         except ValueError as exc:
             errores_fila.append(str(exc))
+        no_rem = Decimal("0")
+        if no_rem_raw is not None and not (isinstance(no_rem_raw, str) and not no_rem_raw.strip()):
+            try:
+                no_rem = _parse_monto(no_rem_raw, permitir_cero=True)
+            except ValueError as exc:
+                errores_fila.append(f"no remunerativo: {exc}")
         if not errores_fila:
             clave = (cat, vigencia)
             if clave in vistos:
@@ -161,7 +179,7 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
         if errores_fila:
             res.errores.append(f"Fila {n}: " + "; ".join(errores_fila))
         else:
-            res.filas.append(FilaEscala(cat, monto, vigencia))
+            res.filas.append(FilaEscala(cat, monto, vigencia, no_rem))
     if not res.filas and not res.errores:
         res.errores.append("La plantilla no tiene filas con datos")
     return res
@@ -171,11 +189,11 @@ def guardar_escala(conn: sqlite3.Connection, filas: list, convenio: str = CONVEN
     """Inserta o actualiza las filas (misma categoría + vigencia pisa el monto)."""
     for f in filas:
         conn.execute(
-            """INSERT INTO escalas (convenio, categoria, monto, vigencia_desde)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO escalas (convenio, categoria, monto, vigencia_desde, no_remunerativo)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT (convenio, categoria, vigencia_desde)
-               DO UPDATE SET monto = excluded.monto""",
-            (convenio, f.categoria, str(f.monto), f.vigencia_desde.isoformat()),
+               DO UPDATE SET monto = excluded.monto, no_remunerativo = excluded.no_remunerativo""",
+            (convenio, f.categoria, str(f.monto), f.vigencia_desde.isoformat(), str(f.no_remunerativo)),
         )
     conn.commit()
     return len(filas)
@@ -185,11 +203,12 @@ def basico_vigente(conn: sqlite3.Connection, categoria: str, al: date,
                    convenio: str = CONVENIO_COMERCIO) -> FilaEscala | None:
     """Básico de la categoría con la vigencia más reciente que no sea posterior a `al`."""
     row = conn.execute(
-        """SELECT categoria, monto, vigencia_desde FROM escalas
+        """SELECT categoria, monto, vigencia_desde, no_remunerativo FROM escalas
            WHERE convenio = ? AND categoria = ? AND vigencia_desde <= ?
            ORDER BY vigencia_desde DESC LIMIT 1""",
         (convenio, categoria, al.isoformat()),
     ).fetchone()
     if row is None:
         return None
-    return FilaEscala(row["categoria"], Decimal(row["monto"]), date.fromisoformat(row["vigencia_desde"]))
+    return FilaEscala(row["categoria"], Decimal(row["monto"]), date.fromisoformat(row["vigencia_desde"]),
+                      Decimal(row["no_remunerativo"]))

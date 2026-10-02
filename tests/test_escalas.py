@@ -89,3 +89,19 @@ def test_solo_xlsx(client):
     r = client.post("/escalas/importar", data={"archivo": (BytesIO(b"x"), "escala.csv")},
                     content_type="multipart/form-data")
     assert r.status_code == 400
+
+
+def test_columna_no_remunerativo_opcional():
+    res = leer_plantilla(xlsx([
+        ["Auxiliar B", 1209365, "01/09/2026", 120000],
+        ["Auxiliar A", 1200000, "01/09/2026", None],
+        ["Auxiliar C", 1220000, "01/09/2026", "-5"],
+    ]))
+    assert [(f.categoria, f.no_remunerativo) for f in res.filas] == [
+        ("Auxiliar B", D("120000.00")), ("Auxiliar A", D("0"))]
+    assert res.errores == ["Fila 4: no remunerativo: el monto tiene que ser mayor a cero: '-5'"]
+
+
+def test_plantilla_vieja_de_tres_columnas_sigue_funcionando():
+    res = leer_plantilla(xlsx([["Vendedor A", 1000, "01/07/2026"]], encabezado=COLUMNAS[:3]))
+    assert res.ok and res.filas[0].no_remunerativo == D("0")

@@ -70,11 +70,11 @@ def test_recibo_pdf_cumple_art_140(client, empleado):
         assert "Gómez, Juan" in texto and "20-22222222-2" in texto
         assert "Vendedor A" in texto and "30/09/2020" in texto
         # c) determinación de cada concepto
-        assert "6 años × 1% s/ básico" in texto and "8,33% s/ básico + antig." in texto
+        assert "6 años × 1% s/ $ 1.170.000,00" in texto and "8,33% s/ $ 1.240.200,00" in texto
         # d) último depósito
         assert "08/2026" in texto and "10/09/2026" in texto and "Banco Nación" in texto
         # e) f) totales y aportes
-        assert "Jubilación SIPA" in texto and "FAECYS" in texto
+        assert "Jubilación 11%" in texto and "FAECYS" in texto and "No remun." in texto
         # g) neto en números y letras
         assert "NETO A COBRAR" in texto and "Son: Pesos" in texto
         # i) lugar y fecha de pago
@@ -86,3 +86,32 @@ def test_recibo_pdf_cumple_art_140(client, empleado):
 
 def test_recibo_inexistente(client):
     assert client.get("/liquidaciones/999/recibo.pdf").status_code == 404
+
+
+def test_jornada_parcial_y_no_remunerativo_de_punta_a_punta(client):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Escala"
+    ws.append(COLUMNAS)
+    ws.append(["Auxiliar B", 1209365, "01/09/2026", 120000])
+    buf = BytesIO()
+    wb.save(buf)
+    assert subir(client, buf.getvalue()).status_code == 201
+    empresa = client.post("/empresas", json={
+        "razon_social": "Comercio Test", "cuit": "30-99999999-9", "domicilio": "Calle 2"}).json["id"]
+    emp = client.post("/empleados", json={
+        "empresa_id": empresa, "apellido": "Parcial", "nombre": "Ana", "cuil": "27-33333333-3",
+        "categoria": "Auxiliar B", "fecha_ingreso": "2004-12-20", "jornada_horas": 4}).json["id"]
+    r = client.post("/liquidaciones", json={"empleado_id": emp, **LIQ})
+    assert r.status_code == 201, r.json
+    assert r.json["neto"] == "651388.00"                 # igual al recibo real de sep/2026
+    assert r.json["jornada_horas"] == 4
+
+
+def test_jornada_invalida(client, escala_cargada):
+    empresa = client.post("/empresas", json={
+        "razon_social": "X", "cuit": "30-1", "domicilio": "Y"}).json["id"]
+    r = client.post("/empleados", json={
+        "empresa_id": empresa, "apellido": "A", "nombre": "B", "cuil": "20-1",
+        "categoria": "Auxiliar B", "fecha_ingreso": "2020-01-01", "jornada_horas": 10})
+    assert r.status_code == 400

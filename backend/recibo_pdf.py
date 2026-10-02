@@ -92,20 +92,22 @@ def _copia(d: DatosRecibo, leyenda: str, estilos) -> list:
           Paragraph(f"<b>Días trabajados:</b> {liq.dias_trabajados}", normal)],
          [Paragraph(f"<b>Básico de escala:</b> $ {pesos(liq.basico_escala)} "
                     f"(vigente desde {_f(liq.vigencia_escala)})", normal),
-          Paragraph(f"<b>Antigüedad:</b> {liq.anios_antiguedad} años", normal)]],
+          Paragraph(f"<b>Antigüedad:</b> {liq.anios_antiguedad} años", normal)],
+         [Paragraph(f"<b>No remunerativo de escala:</b> $ {pesos(liq.no_remunerativo_escala)}", normal),
+          Paragraph(f"<b>Jornada:</b> {liq.jornada_horas} hs diarias", normal)]],
         colWidths=[120 * mm, 60 * mm],
         style=[("BOX", (0, 0), (-1, -1), 0.5, grilla)]))
     elementos.append(Spacer(1, 3 * mm))
 
     # c) e) f) Conceptos
-    filas = [["Cód.", "Concepto", "Determinación", "Haberes", "Descuentos"]]
+    columnas = ("remunerativo", "no_remunerativo", "descuento")
+    filas = [["Cód.", "Concepto", "Determinación", "Remun.", "No remun.", "Descuentos"]]
     for c in liq.conceptos:
-        hab = pesos(c.importe) if c.tipo == "remunerativo" else ""
-        desc = pesos(c.importe) if c.tipo == "descuento" else ""
-        filas.append([c.codigo, Paragraph(c.descripcion, chico), Paragraph(c.detalle, chico), hab, desc])
-    filas.append(["", Paragraph("<b>Totales</b>", chico), Paragraph("Total bruto remunerativo / total descuentos", chico),
-                  pesos(liq.total_remunerativo), pesos(liq.total_descuentos)])
-    tabla = Table(filas, colWidths=[14 * mm, 52 * mm, 64 * mm, 25 * mm, 25 * mm], repeatRows=1)
+        importes = [pesos(c.importe) if c.tipo == t else "" for t in columnas]
+        filas.append([c.codigo, Paragraph(c.descripcion, chico), Paragraph(c.detalle, chico), *importes])
+    filas.append(["", Paragraph("<b>Totales</b>", chico), Paragraph("Bruto remunerativo / no remunerativo / descuentos", chico),
+                  pesos(liq.total_remunerativo), pesos(liq.total_no_remunerativo), pesos(liq.total_descuentos)])
+    tabla = Table(filas, colWidths=[13 * mm, 45 * mm, 56 * mm, 22 * mm, 22 * mm, 22 * mm], repeatRows=1)
     tabla.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8),
         ("FONT", (0, 1), (-1, -1), "Helvetica", 8),

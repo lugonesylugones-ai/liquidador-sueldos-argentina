@@ -37,4 +37,4 @@ def empleado(client, escala_cargada):
         "razon_social": "Test SA", "cuit": "30-11111111-1", "domicilio": "Calle 1"}).json["id"]
     return client.post("/empleados", json={
         "empresa_id": empresa, "apellido": "Gómez", "nombre": "Juan", "cuil": "20-22222222-2",
-        "categoria": "Vendedor A", "fecha_ingreso": "2020-09-30", "afiliado_sindicato": False}).json["id"]
+        "categoria": "Vendedor A", "fecha_ingreso": "2020-09-30"}).json["id"]
