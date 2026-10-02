@@ -94,7 +94,8 @@ def create_app(config: dict | None = None) -> Flask:
     @app.get("/escalas")
     def listar_escalas():
         rows = dbmod.get_db().execute(
-            "SELECT categoria, monto, vigencia_desde, no_remunerativo FROM escalas WHERE convenio = ? "
+            "SELECT categoria, monto, vigencia_desde, no_remunerativo, asignacion_unica FROM escalas "
+            "WHERE convenio = ? "
             "ORDER BY vigencia_desde DESC, categoria", (CONVENIO_COMERCIO,)).fetchall()
         return jsonify([dict(r) for r in rows])
 
@@ -143,7 +144,11 @@ def create_app(config: dict | None = None) -> Flask:
         if escala is None:
             raise ErrorDatos(f"No hay escala cargada para {emp['categoria']} vigente en {periodo}")
         tope = _decimal_opcional(d, "tope_base_imponible")
-        extraordinaria = _decimal_opcional(d, "asignacion_extraordinaria") or Decimal("0")
+        extraordinaria = _decimal_opcional(d, "asignacion_extraordinaria")
+        if extraordinaria is None:
+            # La de la escala es "única vez": solo si la vigencia es de este mismo mes.
+            mismo_mes = escala.vigencia_desde.strftime("%Y-%m") == periodo
+            extraordinaria = escala.asignacion_unica if mismo_mes else Decimal("0")
         try:
             liq = liquidar_comercio(
                 periodo=periodo, categoria=emp["categoria"], basico=escala.monto,

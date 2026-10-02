@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS escalas (
     monto TEXT NOT NULL,              -- Decimal guardado como texto
     vigencia_desde TEXT NOT NULL,     -- YYYY-MM-DD
     no_remunerativo TEXT NOT NULL DEFAULT '0',
+    asignacion_unica TEXT NOT NULL DEFAULT '0',
     UNIQUE (convenio, categoria, vigencia_desde)
 );
 

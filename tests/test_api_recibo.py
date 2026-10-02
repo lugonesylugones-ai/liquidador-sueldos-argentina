@@ -115,3 +115,24 @@ def test_jornada_invalida(client, escala_cargada):
         "empresa_id": empresa, "apellido": "A", "nombre": "B", "cuil": "20-1",
         "categoria": "Auxiliar B", "fecha_ingreso": "2020-01-01", "jornada_horas": 10})
     assert r.status_code == 400
+
+
+def test_escala_2026_completa_y_asignacion_unica_solo_en_su_mes(client):
+    from scripts.generar_ejemplo import escala_2026
+    r = subir(client, escala_2026())
+    assert r.status_code == 201 and r.json["importadas"] == 63
+    empresa = client.post("/empresas", json={
+        "razon_social": "Comercio Test", "cuit": "30-99999999-9", "domicilio": "Calle 2"}).json["id"]
+    emp = client.post("/empleados", json={
+        "empresa_id": empresa, "apellido": "Ocho", "nombre": "Horas", "cuil": "20-44444444-4",
+        "categoria": "Auxiliar B", "fecha_ingreso": "2017-07-03"}).json["id"]
+    netos = {}
+    for periodo in ("2026-07", "2026-08", "2026-09", "2026-10"):
+        r = client.post("/liquidaciones", json={"empleado_id": emp, **LIQ, "periodo": periodo})
+        netos[periodo] = (r.json["neto"], [c["codigo"] for c in r.json["conceptos"]])
+    # Julio a septiembre: mismos netos que los recibos reales del empleado A.
+    assert netos["2026-07"][0] == "1230886.00" and "EXTR" in netos["2026-07"][1]
+    assert netos["2026-08"][0] == "1253036.00" and "EXTR" in netos["2026-08"][1]
+    assert netos["2026-09"][0] == "1252060.00" and "EXTR" not in netos["2026-09"][1]
+    # Octubre sin escala nueva: sigue la de septiembre y no reaparece la asignación.
+    assert "EXTR" not in netos["2026-10"][1]

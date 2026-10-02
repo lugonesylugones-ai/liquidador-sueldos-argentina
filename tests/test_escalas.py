@@ -120,3 +120,8 @@ def test_plantilla_vieja_de_tres_columnas_sigue_funcionando():
 ])
 def test_normaliza_nombres_de_categoria(texto, esperado):
     assert normalizar_categoria(texto) == esperado
+
+
+def test_columna_asignacion_unica():
+    res = leer_plantilla(xlsx([["Auxiliar B", 1161573, "01/07/2026", 120000, 25000]]))
+    assert res.ok and res.filas[0].asignacion_unica == D("25000.00")
