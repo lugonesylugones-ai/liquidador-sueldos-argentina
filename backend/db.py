@@ -1,0 +1,68 @@
+import sqlite3
+
+from flask import current_app, g
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS empresas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    razon_social TEXT NOT NULL,
+    cuit TEXT NOT NULL UNIQUE,
+    domicilio TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS escalas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    convenio TEXT NOT NULL,
+    categoria TEXT NOT NULL,
+    monto TEXT NOT NULL,              -- Decimal guardado como texto
+    vigencia_desde TEXT NOT NULL,     -- YYYY-MM-DD
+    UNIQUE (convenio, categoria, vigencia_desde)
+);
+
+CREATE TABLE IF NOT EXISTS empleados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+    apellido TEXT NOT NULL,
+    nombre TEXT NOT NULL,
+    cuil TEXT NOT NULL UNIQUE,
+    convenio TEXT NOT NULL DEFAULT 'CCT 130/75',
+    categoria TEXT NOT NULL,
+    fecha_ingreso TEXT NOT NULL,      -- YYYY-MM-DD
+    afiliado_sindicato INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS liquidaciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    empleado_id INTEGER NOT NULL REFERENCES empleados(id),
+    periodo TEXT NOT NULL,            -- YYYY-MM
+    fecha_pago TEXT NOT NULL,
+    lugar_pago TEXT NOT NULL,
+    resultado TEXT NOT NULL,          -- JSON con conceptos y totales
+    creada TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (empleado_id, periodo)
+);
+"""
+
+
+def connect(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(SCHEMA)
+    conn.commit()
+
+
+def get_db() -> sqlite3.Connection:
+    if "db" not in g:
+        g.db = connect(current_app.config["DATABASE"])
+    return g.db
+
+
+def close_db(_exc=None) -> None:
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()

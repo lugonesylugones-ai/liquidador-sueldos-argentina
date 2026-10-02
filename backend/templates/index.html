@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Liquidador de sueldos · Comercio</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #1b2733; }
+    code { background: #eef1f4; padding: 0 .3em; border-radius: 3px; }
+    form { margin: 1rem 0; padding: 1rem; border: 1px solid #ccd3da; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Liquidador de sueldos · Comercio (CCT 130/75)</h1>
+  <p>1. Bajá la <a href="/escalas/plantilla">plantilla de escala</a>, completala con los básicos del acuerdo vigente.</p>
+  <form action="/escalas/importar" method="post" enctype="multipart/form-data">
+    <p>2. Subí la escala completada:</p>
+    <input type="file" name="archivo" accept=".xlsx" required>
+    <button type="submit">Importar</button>
+  </form>
+  <p>3. Cargá empresa y empleados con <code>POST /empresas</code> y <code>POST /empleados</code>, liquidá con
+     <code>POST /liquidaciones</code> y bajá el recibo en <code>/liquidaciones/&lt;id&gt;/recibo.pdf</code>.</p>
+  <p>Escalas cargadas: <a href="/escalas">/escalas</a></p>
+</body>
+</html>
