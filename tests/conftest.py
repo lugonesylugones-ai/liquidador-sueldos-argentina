@@ -9,7 +9,8 @@ from backend.escalas import CATEGORIAS_COMERCIO, generar_plantilla
 
 @pytest.fixture
 def app(tmp_path):
-    return create_app({"DATABASE": str(tmp_path / "test.db"), "TESTING": True})
+    return create_app({"DATABASE": str(tmp_path / "test.db"), "TESTING": True,
+                       "CARGAR_ESCALAS_INICIALES": False})
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def escala_cargada(client):
 @pytest.fixture
 def empleado(client, escala_cargada):
     empresa = client.post("/empresas", json={
-        "razon_social": "Test SA", "cuit": "30-11111111-1", "domicilio": "Calle 1"}).json["id"]
+        "razon_social": "Test SA", "cuit": "30-11111111-8", "domicilio": "Calle 1"}).json["id"]
     return client.post("/empleados", json={
-        "empresa_id": empresa, "apellido": "Gómez", "nombre": "Juan", "cuil": "20-22222222-2",
+        "empresa_id": empresa, "apellido": "Gómez", "nombre": "Juan", "cuil": "20-22222222-3",
         "categoria": "Vendedor A", "fecha_ingreso": "2020-09-30"}).json["id"]

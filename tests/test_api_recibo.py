@@ -65,9 +65,9 @@ def test_recibo_pdf_cumple_art_140(client, empleado):
     original, duplicado = (p.extract_text() for p in pdf.pages)
     for texto in (original, duplicado):
         # a) empleador
-        assert "Test SA" in texto and "30-11111111-1" in texto and "Calle 1" in texto
+        assert "Test SA" in texto and "30-11111111-8" in texto and "Calle 1" in texto
         # b) y k) trabajador, CUIL, categoría, ingreso
-        assert "Gómez, Juan" in texto and "20-22222222-2" in texto
+        assert "Gómez, Juan" in texto and "20-22222222-3" in texto
         assert "Vendedor A" in texto and "30/09/2020" in texto
         # c) determinación de cada concepto
         assert "6 años × 1% s/ $ 1.170.000,00" in texto and "8,33% s/ $ 1.240.200,00" in texto
@@ -98,9 +98,9 @@ def test_jornada_parcial_y_no_remunerativo_de_punta_a_punta(client):
     wb.save(buf)
     assert subir(client, buf.getvalue()).status_code == 201
     empresa = client.post("/empresas", json={
-        "razon_social": "Comercio Test", "cuit": "30-99999999-9", "domicilio": "Calle 2"}).json["id"]
+        "razon_social": "Comercio Test", "cuit": "30-99999999-5", "domicilio": "Calle 2"}).json["id"]
     emp = client.post("/empleados", json={
-        "empresa_id": empresa, "apellido": "Parcial", "nombre": "Ana", "cuil": "27-33333333-3",
+        "empresa_id": empresa, "apellido": "Parcial", "nombre": "Ana", "cuil": "27-33333333-9",
         "categoria": "Auxiliar B", "fecha_ingreso": "2004-12-20", "jornada_horas": 4}).json["id"]
     r = client.post("/liquidaciones", json={"empleado_id": emp, **LIQ})
     assert r.status_code == 201, r.json
@@ -110,9 +110,9 @@ def test_jornada_parcial_y_no_remunerativo_de_punta_a_punta(client):
 
 def test_jornada_invalida(client, escala_cargada):
     empresa = client.post("/empresas", json={
-        "razon_social": "X", "cuit": "30-1", "domicilio": "Y"}).json["id"]
+        "razon_social": "X", "cuit": "30-70000000-8", "domicilio": "Y"}).json["id"]
     r = client.post("/empleados", json={
-        "empresa_id": empresa, "apellido": "A", "nombre": "B", "cuil": "20-1",
+        "empresa_id": empresa, "apellido": "A", "nombre": "B", "cuil": "20-55555555-6",
         "categoria": "Auxiliar B", "fecha_ingreso": "2020-01-01", "jornada_horas": 10})
     assert r.status_code == 400
 
@@ -122,9 +122,9 @@ def test_escala_2026_completa_y_asignacion_unica_solo_en_su_mes(client):
     r = subir(client, escala_2026())
     assert r.status_code == 201 and r.json["importadas"] == 63
     empresa = client.post("/empresas", json={
-        "razon_social": "Comercio Test", "cuit": "30-99999999-9", "domicilio": "Calle 2"}).json["id"]
+        "razon_social": "Comercio Test", "cuit": "30-99999999-5", "domicilio": "Calle 2"}).json["id"]
     emp = client.post("/empleados", json={
-        "empresa_id": empresa, "apellido": "Ocho", "nombre": "Horas", "cuil": "20-44444444-4",
+        "empresa_id": empresa, "apellido": "Ocho", "nombre": "Horas", "cuil": "20-44444444-5",
         "categoria": "Auxiliar B", "fecha_ingreso": "2017-07-03"}).json["id"]
     netos = {}
     for periodo in ("2026-07", "2026-08", "2026-09", "2026-10"):

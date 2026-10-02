@@ -3,45 +3,67 @@ import sqlite3
 from flask import current_app, g
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS convenios (
+    codigo TEXT PRIMARY KEY,          -- ej. 'CCT 130/75'
+    nombre TEXT NOT NULL,
+    tiene_motor INTEGER NOT NULL DEFAULT 0   -- 1 si el liquidador sabe calcularlo
+);
+
+CREATE TABLE IF NOT EXISTS categorias (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    convenio TEXT NOT NULL REFERENCES convenios(codigo),
+    nombre TEXT NOT NULL,
+    orden INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (convenio, nombre)
+);
+
 CREATE TABLE IF NOT EXISTS empresas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     razon_social TEXT NOT NULL,
     cuit TEXT NOT NULL UNIQUE,
-    domicilio TEXT NOT NULL
+    domicilio TEXT NOT NULL,
+    lugar_pago TEXT                   -- default para los recibos
 );
 
 CREATE TABLE IF NOT EXISTS escalas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    convenio TEXT NOT NULL,
+    convenio TEXT NOT NULL REFERENCES convenios(codigo),
     categoria TEXT NOT NULL,
     monto TEXT NOT NULL,              -- Decimal guardado como texto
     vigencia_desde TEXT NOT NULL,     -- YYYY-MM-DD
     no_remunerativo TEXT NOT NULL DEFAULT '0',
     asignacion_unica TEXT NOT NULL DEFAULT '0',
+    fuente TEXT,                      -- de dónde salió el monto
+    verificada INTEGER NOT NULL DEFAULT 0,   -- 1 si se contrastó con el acuerdo o recibos
     UNIQUE (convenio, categoria, vigencia_desde)
 );
 
 CREATE TABLE IF NOT EXISTS empleados (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+    legajo TEXT,
     apellido TEXT NOT NULL,
     nombre TEXT NOT NULL,
-    cuil TEXT NOT NULL UNIQUE,
-    convenio TEXT NOT NULL DEFAULT 'CCT 130/75',
+    cuil TEXT NOT NULL,
+    convenio TEXT NOT NULL DEFAULT 'CCT 130/75' REFERENCES convenios(codigo),
     categoria TEXT NOT NULL,
     fecha_ingreso TEXT NOT NULL,      -- YYYY-MM-DD
-    jornada_horas INTEGER NOT NULL DEFAULT 8 CHECK (jornada_horas BETWEEN 1 AND 8)
+    fecha_egreso TEXT,                -- NULL = activo
+    jornada_horas INTEGER NOT NULL DEFAULT 8 CHECK (jornada_horas BETWEEN 1 AND 8),
+    UNIQUE (empresa_id, cuil),
+    UNIQUE (empresa_id, legajo)
 );
 
 CREATE TABLE IF NOT EXISTS liquidaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empleado_id INTEGER NOT NULL REFERENCES empleados(id),
-    periodo TEXT NOT NULL,            -- YYYY-MM
+    periodo TEXT NOT NULL,            -- YYYY-MM (para SAC, el mes de pago)
+    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac')),
     fecha_pago TEXT NOT NULL,
     lugar_pago TEXT NOT NULL,
     resultado TEXT NOT NULL,          -- JSON con conceptos y totales
     creada TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (empleado_id, periodo)
+    UNIQUE (empleado_id, periodo, tipo)
 );
 """
 

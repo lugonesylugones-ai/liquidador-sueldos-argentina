@@ -15,7 +15,9 @@ Alcance de esta versión:
   sobre el equivalente a jornada completa.
 - Neto redondeado para arriba al peso entero; la diferencia va como "Redondeo".
 
-Fuera de alcance (todavía): horas extra, SAC, vacaciones, licencias y ganancias.
+SAC: ver `liquidar_sac`.
+
+Fuera de alcance (todavía): horas extra, vacaciones, licencias y ganancias.
 """
 from calendar import monthrange
 from dataclasses import dataclass, field, asdict
@@ -98,6 +100,7 @@ class Liquidacion:
     total_no_remunerativo: Decimal = Decimal("0")
     total_descuentos: Decimal = Decimal("0")
     neto: Decimal = Decimal("0")
+    tipo: str = "mensual"          # "mensual" | "sac"
 
     def de_tipo(self, tipo: str):
         return [c for c in self.conceptos if c.tipo == tipo]
@@ -145,7 +148,8 @@ def _bloque(liq: Liquidacion, *, tipo: str, sufijo: str, monto: Decimal, desc_mo
     antiguedad = redondear(monto * PORC_ANTIGUEDAD_ANUAL * anios)
     if antiguedad:
         liq.conceptos.append(Concepto(
-            f"ANT{cod}", f"Antigüedad{sufijo}", f"{anios} años × 1% s/ $ {pesos(monto)}", tipo, antiguedad))
+            f"ANT{cod}", f"Antigüedad{sufijo}",
+            f"{anios} {'año' if anios == 1 else 'años'} × 1% s/ $ {pesos(monto)}", tipo, antiguedad))
     if inasistencias:
         descuento = redondear((monto + antiguedad) / DIAS_MES * inasistencias)
         liq.conceptos.append(Concepto(
@@ -204,6 +208,13 @@ def liquidar_comercio(
         liq.conceptos.append(Concepto(
             "EXTR", "Asignación extraordinaria", f"Única vez · {jornada_txt}", "no_remunerativo", extra))
 
+    _aportes_y_neto(liq, factor, tope_base_imponible)
+    return liq
+
+
+def _aportes_y_neto(liq: Liquidacion, factor: Decimal, tope_base_imponible: Decimal | None) -> None:
+    """Agrega aportes, redondeo y totales a partir de los haberes ya cargados."""
+    parcial = factor != 1
     total_rem = sum((c.importe for c in liq.remunerativos()), Decimal("0"))
     total_nr = sum((c.importe for c in liq.no_remunerativos()), Decimal("0"))
 
@@ -241,4 +252,74 @@ def liquidar_comercio(
     liq.total_no_remunerativo = total_nr
     liq.total_descuentos = total_desc
     liq.neto = total_rem + total_nr - total_desc
+
+
+# Conceptos no remunerativos que no son "normales y habituales" y no cuentan para el SAC.
+NO_HABITUALES = {"EXTR", "RED"}
+
+
+def semestre_de(periodo: str) -> tuple[date, date]:
+    anio, mes = (int(p) for p in periodo.split("-"))
+    if mes <= 6:
+        return date(anio, 1, 1), date(anio, 6, 30)
+    return date(anio, 7, 1), date(anio, 12, 31)
+
+
+def liquidar_sac(
+    *,
+    periodo: str,
+    categoria: str,
+    fecha_ingreso: date,
+    historial: list,
+    jornada_horas: int = HORAS_JORNADA_COMPLETA,
+    fecha_egreso: date | None = None,
+    tope_base_imponible: Decimal | None = None,
+) -> Liquidacion:
+    """Sueldo anual complementario (Ley 23.041 y art. 121 LCT).
+
+    `periodo` es el mes de pago (junio o diciembre). `historial` son las
+    liquidaciones mensuales del empleado; se usan las del semestre de `periodo`.
+    SAC = 50% de la mejor remuneración mensual del semestre, proporcional a los
+    días trabajados en el semestre. La parte no remunerativa (acuerdo + antig. +
+    presentismo) se trata igual y va como "SAC s/ no remunerativo"; la asignación
+    de única vez y el redondeo no cuentan porque no son habituales.
+    """
+    inicio, fin = semestre_de(periodo)
+    meses = [l for l in historial if l.tipo == "mensual" and inicio <= primer_dia(l.periodo) <= fin]
+    if not meses:
+        raise ValueError(f"no hay liquidaciones mensuales del semestre {inicio:%m/%Y}-{fin:%m/%Y}")
+    desde = max(inicio, fecha_ingreso)
+    hasta = min(fin, fecha_egreso) if fecha_egreso else fin
+    if hasta < desde:
+        raise ValueError("el empleado no trabajó en el semestre")
+
+    def nr_habitual(l):
+        return sum((c.importe for c in l.no_remunerativos() if c.codigo not in NO_HABITUALES), Decimal("0"))
+
+    mejor_rem = max(meses, key=lambda l: l.total_remunerativo)
+    mejor_nr = max(meses, key=nr_habitual)
+    dias = (hasta - desde).days + 1
+    dias_semestre = (fin - inicio).days + 1
+    proporcion = Decimal(dias) / Decimal(dias_semestre)
+    prop_txt = "semestre completo" if dias == dias_semestre else f"{dias}/{dias_semestre} días"
+
+    factor = Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA
+    liq = Liquidacion(
+        periodo=periodo, categoria=categoria, basico_escala=mejor_rem.total_remunerativo,
+        no_remunerativo_escala=nr_habitual(mejor_nr), vigencia_escala=inicio,
+        jornada_horas=jornada_horas, anios_antiguedad=anios_cumplidos(fecha_ingreso, hasta),
+        dias_trabajados=dias, tipo="sac",
+    )
+    sac = redondear(mejor_rem.total_remunerativo / 2 * proporcion)
+    liq.conceptos.append(Concepto(
+        "SAC", "Sueldo anual complementario",
+        f"50% de $ {pesos(mejor_rem.total_remunerativo)} ({mejor_rem.periodo}) · {prop_txt}",
+        "remunerativo", sac))
+    sac_nr = redondear(nr_habitual(mejor_nr) / 2 * proporcion)
+    if sac_nr:
+        liq.conceptos.append(Concepto(
+            "SACNR", "SAC s/ no remunerativo",
+            f"50% de $ {pesos(nr_habitual(mejor_nr))} ({mejor_nr.periodo}) · {prop_txt}",
+            "no_remunerativo", sac_nr))
+    _aportes_y_neto(liq, factor, tope_base_imponible)
     return liq

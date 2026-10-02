@@ -227,18 +227,20 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
     return res
 
 
-def guardar_escala(conn: sqlite3.Connection, filas: list, convenio: str = CONVENIO_COMERCIO) -> int:
+def guardar_escala(conn: sqlite3.Connection, filas: list, convenio: str = CONVENIO_COMERCIO,
+                   fuente: str | None = None) -> int:
     """Inserta o actualiza las filas (misma categoría + vigencia pisa el monto)."""
     for f in filas:
         conn.execute(
             """INSERT INTO escalas (convenio, categoria, monto, vigencia_desde, no_remunerativo,
-                                   asignacion_unica)
-               VALUES (?, ?, ?, ?, ?, ?)
+                                   asignacion_unica, fuente, verificada)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                ON CONFLICT (convenio, categoria, vigencia_desde)
                DO UPDATE SET monto = excluded.monto, no_remunerativo = excluded.no_remunerativo,
-                             asignacion_unica = excluded.asignacion_unica""",
+                             asignacion_unica = excluded.asignacion_unica,
+                             fuente = excluded.fuente, verificada = 0""",
             (convenio, f.categoria, str(f.monto), f.vigencia_desde.isoformat(), str(f.no_remunerativo),
-             str(f.asignacion_unica)),
+             str(f.asignacion_unica), fuente),
         )
     conn.commit()
     return len(filas)

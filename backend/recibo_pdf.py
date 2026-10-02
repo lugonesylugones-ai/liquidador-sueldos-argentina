@@ -45,6 +45,7 @@ class DatosRecibo:
     ultimo_deposito_periodo: str
     ultimo_deposito_fecha: date
     ultimo_deposito_banco: str
+    empleado_legajo: str | None = None
 
 
 def _periodo_texto(periodo: str) -> str:
@@ -54,6 +55,32 @@ def _periodo_texto(periodo: str) -> str:
 
 def _f(d: date) -> str:
     return d.strftime("%d/%m/%Y")
+
+
+def _anios(liq: Liquidacion) -> str:
+    return f"{liq.anios_antiguedad} {'año' if liq.anios_antiguedad == 1 else 'años'}"
+
+
+def _filas_periodo(liq: Liquidacion, normal) -> list:
+    if liq.tipo == "sac":
+        semestre = "1°" if int(liq.periodo[5:]) <= 6 else "2°"
+        return [
+            [Paragraph(f"<b>Período:</b> SAC {semestre} semestre {liq.periodo[:4]}", normal),
+             Paragraph(f"<b>Días del semestre:</b> {liq.dias_trabajados}", normal)],
+            [Paragraph(f"<b>Mejor remuneración del semestre:</b> $ {pesos(liq.basico_escala)}", normal),
+             Paragraph(f"<b>Antigüedad:</b> {_anios(liq)}", normal)],
+            [Paragraph(f"<b>Mejor no remunerativo habitual:</b> $ {pesos(liq.no_remunerativo_escala)}", normal),
+             ""],
+        ]
+    return [
+        [Paragraph(f"<b>Período:</b> {_periodo_texto(liq.periodo)} · mensual", normal),
+         Paragraph(f"<b>Días trabajados:</b> {liq.dias_trabajados}", normal)],
+        [Paragraph(f"<b>Básico de escala:</b> $ {pesos(liq.basico_escala)} "
+                   f"(vigente desde {_f(liq.vigencia_escala)})", normal),
+         Paragraph(f"<b>Antigüedad:</b> {_anios(liq)}", normal)],
+        [Paragraph(f"<b>No remunerativo de escala:</b> $ {pesos(liq.no_remunerativo_escala)}", normal),
+         ""],
+    ]
 
 
 def _copia(d: DatosRecibo, leyenda: str, estilos) -> list:
@@ -88,12 +115,8 @@ def _copia(d: DatosRecibo, leyenda: str, estilos) -> list:
           Paragraph(f"<b>CUIL:</b> {d.empleado_cuil}", normal)],
          [Paragraph(f"<b>Categoría:</b> {liq.categoria} ({d.convenio})", normal),
           Paragraph(f"<b>Fecha de ingreso:</b> {_f(d.empleado_fecha_ingreso)}", normal)],
-         [Paragraph(f"<b>Período:</b> {_periodo_texto(liq.periodo)} · mensual", normal),
-          Paragraph(f"<b>Días trabajados:</b> {liq.dias_trabajados}", normal)],
-         [Paragraph(f"<b>Básico de escala:</b> $ {pesos(liq.basico_escala)} "
-                    f"(vigente desde {_f(liq.vigencia_escala)})", normal),
-          Paragraph(f"<b>Antigüedad:</b> {liq.anios_antiguedad} años", normal)],
-         [Paragraph(f"<b>No remunerativo de escala:</b> $ {pesos(liq.no_remunerativo_escala)}", normal),
+         *_filas_periodo(liq, normal),
+         [Paragraph(f"<b>Legajo:</b> {d.empleado_legajo or '-'}", normal),
           Paragraph(f"<b>Jornada:</b> {liq.jornada_horas} hs diarias", normal)]],
         colWidths=[120 * mm, 60 * mm],
         style=[("BOX", (0, 0), (-1, -1), 0.5, grilla)]))
@@ -155,12 +178,23 @@ def _copia(d: DatosRecibo, leyenda: str, estilos) -> list:
     return elementos
 
 
-def generar_recibo(destino, datos: DatosRecibo) -> None:
-    """Escribe el PDF (original + duplicado) en `destino` (ruta o archivo binario)."""
+def generar_recibos(destino, lista: list) -> None:
+    """Escribe un PDF con original + duplicado de cada recibo de `lista`."""
     estilos = getSampleStyleSheet()
+    primero = lista[0]
+    titulo = (f"Recibo {primero.empleado_apellido} {primero.liquidacion.periodo}" if len(lista) == 1
+              else f"Recibos {primero.empresa_razon_social} {primero.liquidacion.periodo}")
     doc = SimpleDocTemplate(destino, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
                             topMargin=15 * mm, bottomMargin=15 * mm,
-                            title=f"Recibo {datos.empleado_apellido} {datos.liquidacion.periodo}",
-                            author=datos.empresa_razon_social)
-    historia = _copia(datos, "ORIGINAL", estilos) + [PageBreak()] + _copia(datos, "DUPLICADO", estilos)
+                            title=titulo, author=primero.empresa_razon_social)
+    historia = []
+    for datos in lista:
+        if historia:
+            historia.append(PageBreak())
+        historia += _copia(datos, "ORIGINAL", estilos) + [PageBreak()] + _copia(datos, "DUPLICADO", estilos)
     doc.build(historia)
+
+
+def generar_recibo(destino, datos: DatosRecibo) -> None:
+    """Escribe el PDF (original + duplicado) de un recibo."""
+    generar_recibos(destino, [datos])

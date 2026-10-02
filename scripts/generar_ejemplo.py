@@ -17,44 +17,39 @@ sys.path.insert(0, str(RAIZ))
 from backend.app import create_app  # noqa: E402
 from openpyxl import load_workbook  # noqa: E402
 
+from backend.datos_iniciales import filas_escala_2026  # noqa: E402
 from backend.escalas import HOJA, agregar_fila, generar_plantilla  # noqa: E402
 
 SALIDA = RAIZ / "ejemplos"
-
-# Escalas julio a septiembre 2026 (acuerdo julio 2026) según Ignacio Online, no la
-# circular de FAECYS. No remunerativo = Inc. NR 100.000 + Recomp. NR 20.000; julio y
-# agosto traen además una asignación de única vez de 25.000. Auxiliar B coincide con
-# los recibos reales de esos tres meses; el resto de las categorías no está contrastado.
-CATEGORIAS_ORDEN = [
-    "Maestranza A", "Maestranza B", "Maestranza C",
-    "Administrativo A", "Administrativo B", "Administrativo C",
-    "Administrativo D", "Administrativo E", "Administrativo F",
-    "Cajero A", "Cajero B", "Cajero C", "Auxiliar A", "Auxiliar B", "Auxiliar C",
-    "Auxiliar Especializado A", "Auxiliar Especializado B",
-    "Vendedor A", "Vendedor B", "Vendedor C", "Vendedor D",
-]
-BASICOS_2026 = {
-    date(2026, 7, 1): [1137023, 1140294, 1151751, 1149298, 1154212, 1159120, 1173854, 1186128,
-                       1204135, 1153389, 1159120, 1166487, 1153389, 1161573, 1188584, 1163214,
-                       1177944, 1153389, 1177947, 1186128, 1204135],
-    date(2026, 8, 1): [1160461, 1163793, 1175464, 1172965, 1177971, 1182970, 1197978, 1210482,
-                       1228824, 1177132, 1182970, 1190474, 1177132, 1185469, 1212983, 1187140,
-                       1202145, 1177132, 1202148, 1210482, 1228824],
-    date(2026, 9, 1): [1183900, 1187292, 1199176, 1196632, 1201729, 1206821, 1222103, 1234836,
-                       1253514, 1200875, 1206821, 1214462, 1200875, 1209365, 1237383, 1211067,
-                       1226346, 1200875, 1226349, 1234836, 1253514],
-}
-NO_REM_2026 = 120000
-ASIG_UNICA_2026 = {date(2026, 7, 1): 25000, date(2026, 8, 1): 25000}
-
 
 def escala_2026() -> bytes:
     wb = load_workbook(BytesIO(generar_plantilla()))
     ws = wb[HOJA]
     ws.delete_rows(2, ws.max_row)
-    for vigencia, basicos in BASICOS_2026.items():
-        for cat, basico in zip(CATEGORIAS_ORDEN, basicos):
-            agregar_fila(ws, cat, vigencia, basico, NO_REM_2026, ASIG_UNICA_2026.get(vigencia))
+    for cat, vigencia, basico, no_rem, asig in filas_escala_2026():
+        agregar_fila(ws, cat, vigencia, basico, no_rem, asig or None)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+EMPLEADOS_EJEMPLO = [
+    # Datos ficticios. Los tres primeros replican los casos de tests/test_recibos_reales.py.
+    ("0001", "Ejemplo", "Ana", "27-30123456-8", "Personal Auxiliar B", date(2017, 7, 3), 8, None),
+    ("0002", "Ejemplo", "Bruno", "20-22222222-3", "Auxiliar B", date(2022, 9, 1), 8, None),
+    ("0003", "Ejemplo", "Carla", "27-33333333-9", "Auxiliar B", date(2004, 12, 20), 4, None),
+    ("0004", "Ejemplo", "Diego", "20-44444444-5", "Vendedores A", date(2025, 3, 1), 8, date(2026, 9, 30)),
+]
+PAGO = {"fecha_pago": "2026-10-03", "lugar_pago": "Ciudad Autónoma de Buenos Aires",
+        "ultimo_deposito_periodo": "08/2026", "ultimo_deposito_fecha": "2026-09-10",
+        "ultimo_deposito_banco": "Banco de la Nación Argentina"}
+
+
+def planilla_empleados(contenido: bytes) -> bytes:
+    wb = load_workbook(BytesIO(contenido))
+    ws = wb["Empleados"]
+    for legajo, apellido, nombre, cuil, cat, ingreso, horas, egreso in EMPLEADOS_EJEMPLO:
+        ws.append([legajo, apellido, nombre, cuil, "CCT 130/75", cat, ingreso, horas, egreso])
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -62,34 +57,39 @@ def escala_2026() -> bytes:
 
 def main() -> Path:
     SALIDA.mkdir(exist_ok=True)
-    plantilla = escala_2026()
-    (SALIDA / "escala_comercio_2026_jul_sep.xlsx").write_bytes(plantilla)
+    escala = escala_2026()
+    (SALIDA / "escala_comercio_2026_jul_sep.xlsx").write_bytes(escala)
 
     with tempfile.TemporaryDirectory() as tmp:
-        app = create_app({"DATABASE": str(Path(tmp) / "ejemplo.db"), "TESTING": True})
+        app = create_app({"DATABASE": str(Path(tmp) / "ejemplo.db"), "TESTING": True,
+                          "CARGAR_ESCALAS_INICIALES": False})
         c = app.test_client()
-        r = c.post("/escalas/importar", data={"archivo": (BytesIO(plantilla), "escala.xlsx")},
+        r = c.post("/escalas/importar", data={"archivo": (BytesIO(escala), "escala.xlsx")},
                    content_type="multipart/form-data")
         assert r.status_code == 201, r.json
         empresa = c.post("/empresas", json={
-            "razon_social": "Almacén Ejemplo S.R.L.", "cuit": "30-71234567-8",
+            "razon_social": "Almacén Ejemplo S.R.L.", "cuit": "30-71234567-1",
             "domicilio": "Av. Corrientes 1234, CABA"}).json["id"]
-        empleado = c.post("/empleados", json={
-            "empresa_id": empresa, "apellido": "Pérez", "nombre": "María Laura",
-            "cuil": "27-30123456-4", "categoria": "Auxiliar B",
-            "fecha_ingreso": "2017-07-03", "jornada_horas": 8}).json["id"]
-        r = c.post("/liquidaciones", json={
-            "empleado_id": empleado, "periodo": "2026-09", "inasistencias_injustificadas": 0,
-            "fecha_pago": "2026-10-03", "lugar_pago": "Ciudad Autónoma de Buenos Aires",
-            "ultimo_deposito_periodo": "08/2026", "ultimo_deposito_fecha": "2026-09-10",
-            "ultimo_deposito_banco": "Banco de la Nación Argentina"})
+        empleados = planilla_empleados(c.get("/empleados/plantilla").data)
+        (SALIDA / "empleados_ejemplo.xlsx").write_bytes(empleados)
+        r = c.post(f"/empresas/{empresa}/empleados/importar",
+                   data={"archivo": (BytesIO(empleados), "empleados.xlsx")}, content_type="multipart/form-data")
         assert r.status_code == 201, r.json
-        pdf = c.get(f"/liquidaciones/{r.json['id']}/recibo.pdf")
-        assert pdf.status_code == 200
-        destino = SALIDA / "recibo_ejemplo.pdf"
-        destino.write_bytes(pdf.data)
-    print(f"Recibo generado en {destino}")
-    return destino
+        for periodo in ("2026-07", "2026-08", "2026-09"):
+            r = c.post(f"/empresas/{empresa}/liquidaciones", json={**PAGO, "periodo": periodo})
+            assert r.status_code == 201 and not r.json["errores"], r.json
+        # Diego egresa el 30/09: SAC proporcional del 2° semestre en septiembre.
+        diego = next(e["id"] for e in c.get(f"/empresas/{empresa}/empleados").json if e["legajo"] == "0004")
+        r = c.post("/liquidaciones/sac", json={**PAGO, "empleado_id": diego, "periodo": "2026-09"})
+        assert r.status_code == 201, r.json
+
+        mensual = c.get(f"/empresas/{empresa}/recibos/2026-09.pdf")
+        sac = c.get(f"/empresas/{empresa}/recibos/2026-09.pdf?tipo=sac")
+        assert mensual.status_code == sac.status_code == 200
+        (SALIDA / "recibos_ejemplo_2026-09.pdf").write_bytes(mensual.data)
+        (SALIDA / "recibo_sac_ejemplo.pdf").write_bytes(sac.data)
+    print(f"Recibos generados en {SALIDA}")
+    return SALIDA
 
 
 if __name__ == "__main__":
