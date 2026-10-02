@@ -6,6 +6,14 @@ El único convenio con motor de cálculo es Comercio (CCT 130/75): sueldo mensua
 
 ## Cómo correrlo
 
+**Lo más fácil:** doble clic en `iniciar.bat` (Windows) o `./iniciar.sh` (Mac/Linux).
+La primera vez crea el entorno e instala lo necesario (hace falta Python 3.10 o más nuevo).
+Después abre el navegador en http://127.0.0.1:5000. La ventana tiene que quedar abierta
+mientras lo usás. Los datos se guardan en `liquidador_sueldos.db` dentro de la misma
+carpeta: si bajás una versión nueva, copiá ese archivo a la carpeta nueva.
+
+A mano:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
