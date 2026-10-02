@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block titulo %}Escalas{% endblock %}
+{% block contenido %}
+<h1>Escalas de {{ convenio }}</h1>
+<section>
+  <h2>Cargar una escala nueva</h2>
+  <p class="muted">Bajá la <a href="{{ url_for('api.descargar_plantilla') }}">plantilla</a> y completala con los montos
+    de jornada completa tal como vienen en la circular. Si una fila tiene errores no se carga nada.
+    La asignación de única vez se paga solo en el mes de su vigencia.</p>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('web.importar_escala') }}">
+    <div class="acciones" style="margin-top:0">
+      <input type="file" name="archivo" accept=".xlsx" required>
+      <button>Subir</button>
+    </div>
+  </form>
+</section>
+
+{% for vigencia, filas in por_vigencia.items() %}
+<section>
+  <h2>Vigente desde {{ vigencia }}</h2>
+  <p class="muted">Fuente: {{ filas[0].fuente }}</p>
+  <div class="tabla"><table>
+    <tr><th>Categoría</th><th class="num">Básico</th><th class="num">No remunerativo</th>
+        <th class="num">Asig. única vez</th><th>Estado</th></tr>
+    {% for f in filas %}
+    <tr><td>{{ f.categoria }}</td><td class="num">{{ f.monto|pesos }}</td>
+        <td class="num">{{ f.no_remunerativo|pesos }}</td><td class="num">{{ f.asignacion_unica|pesos }}</td>
+        <td>{% if f.verificada %}<span class="chip ok">Verificada</span>{% else %}<span class="chip">Sin verificar</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% else %}
+<section><p class="muted">No hay escalas cargadas.</p></section>
+{% endfor %}
+{% endblock %}

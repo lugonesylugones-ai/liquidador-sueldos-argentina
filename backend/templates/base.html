@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Liquidador{% endblock %} · Liquidador de sueldos</title>
+  <style>
+    :root { --fondo: #f6f7f9; --panel: #fff; --texto: #1b2733; --suave: #5b6b7a; --borde: #d5dbe1;
+            --acento: #1f5fa8; --ok: #e3f4e8; --ok-t: #1d5e33; --error: #fbe7e7; --error-t: #8a1f1f;
+            --aviso: #fff4d6; --aviso-t: #6b4e00; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fondo: #14181d; --panel: #1d232a; --texto: #e3e8ee; --suave: #9aa8b5; --borde: #333d48;
+              --acento: #7fb0ea; --ok: #183524; --ok-t: #9fdcb3; --error: #3a1d1d; --error-t: #f2b0b0;
+              --aviso: #3a3015; --aviso-t: #f0d68a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--fondo); color: var(--texto); }
+    header { background: var(--panel); border-bottom: 1px solid var(--borde); }
+    nav, main { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+    nav { display: flex; gap: 1.2rem; align-items: center; height: 52px; flex-wrap: wrap; }
+    nav strong { margin-right: auto; }
+    a { color: var(--acento); }
+    nav a { text-decoration: none; }
+    main { padding-top: 1.2rem; padding-bottom: 3rem; }
+    h1 { font-size: 1.5rem; margin: .2rem 0 1rem; }
+    h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
+    section { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .7rem 1rem; }
+    label { display: flex; flex-direction: column; font-size: .85rem; color: var(--suave); gap: .2rem; }
+    input, select { font: inherit; padding: .4rem .5rem; border: 1px solid var(--borde); border-radius: 5px;
+                    background: var(--fondo); color: var(--texto); min-width: 0; }
+    button, .boton { font: inherit; padding: .45rem .9rem; border-radius: 5px; border: 1px solid var(--acento);
+                     background: var(--acento); color: var(--panel); cursor: pointer; text-decoration: none; display: inline-block; }
+    .boton.sec { background: transparent; color: var(--acento); }
+    .acciones { display: flex; gap: .6rem; align-items: end; flex-wrap: wrap; margin-top: .8rem; }
+    .tabla { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+    th { color: var(--suave); font-weight: 600; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--suave); }
+    .msg { padding: .6rem .8rem; border-radius: 6px; margin-bottom: .5rem; }
+    .msg.ok { background: var(--ok); color: var(--ok-t); }
+    .msg.error { background: var(--error); color: var(--error-t); }
+    .msg.detalle { background: var(--error); color: var(--error-t); margin-left: 1.2rem; font-size: .9rem; }
+    .aviso { background: var(--aviso); color: var(--aviso-t); padding: .6rem .8rem; border-radius: 6px; margin-bottom: .8rem; }
+    .chip { font-size: .78rem; padding: .1rem .45rem; border-radius: 99px; background: var(--aviso); color: var(--aviso-t); }
+    .chip.ok { background: var(--ok); color: var(--ok-t); }
+    details summary { cursor: pointer; color: var(--acento); }
+  </style>
+</head>
+<body>
+  <header><nav>
+    <strong>Liquidador de sueldos</strong>
+    <a href="{{ url_for('web.inicio') }}">Empresas</a>
+    <a href="{{ url_for('web.escalas') }}">Escalas</a>
+  </nav></header>
+  <main>
+    {% for categoria, mensaje in get_flashed_messages(with_categories=true) %}
+      <div class="msg {{ categoria }}">{{ mensaje }}</div>
+    {% endfor %}
+    {% block contenido %}{% endblock %}
+  </main>
+</body>
+</html>

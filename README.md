@@ -10,45 +10,63 @@ El único convenio con motor de cálculo es Comercio (CCT 130/75): sueldo mensua
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-flask run            # http://127.0.0.1:5000
+flask --app backend.app:create_app run   # abrir http://127.0.0.1:5000
 pytest -q            # tests
 python scripts/generar_ejemplo.py   # genera los archivos de ejemplos/
 ```
+
+## Usarlo desde el navegador
+
+Con el servidor andando, entrá a http://127.0.0.1:5000:
+
+1. **Empresas**: das de alta la empresa (razón social, CUIT, domicilio, lugar de pago).
+2. **Empleados**: desde la página de la empresa, de a uno o subiendo la planilla Excel.
+   Ahí mismo se editan y se carga la fecha de egreso.
+3. **Liquidar**: elegís período y si es sueldo o aguinaldo. El formulario trae los
+   datos del último depósito usado y un casillero de faltas sin justificar por empleado.
+4. **Recibos**: la pantalla del período muestra los totales y baja el PDF de todos juntos
+   o de cada uno.
+5. **Escalas**: muestra las cargadas (con "Sin verificar" / "Verificada") y sube nuevas.
+
+Está pensado para usarlo en tu propia compu: no tiene usuarios ni contraseña, así que
+no lo publiques en internet tal como está.
 
 ## Datos iniciales
 
 Una base nueva arranca con el convenio de Comercio, sus 21 categorías y las escalas de
 julio a septiembre 2026 (`backend/datos_iniciales.py`). **Esas escalas salen de Ignacio
 Online, no de la circular de FAECYS**, y quedan marcadas como no verificadas
-(`GET /escalas` muestra `fuente` y `verificada`). Solo Auxiliar B está contrastada contra
+(la pantalla de escalas y `GET /api/escalas` muestran la fuente y si está verificada). Solo Auxiliar B está contrastada contra
 recibos reales. Las escalas que se importan desde Excel quedan con la fuente del archivo.
 
-## Flujo
+## API
 
-1. **Escalas.** `GET /escalas/plantilla` baja la plantilla (hoja `Escala`: Categoría | Monto |
-   Vigencia desde | No remunerativo | Asig. única vez) y `POST /escalas/importar` la sube.
+Todo lo de la web también se puede hacer por API JSON, bajo `/api`.
+
+1. **Escalas.** `GET /api/escalas/plantilla` baja la plantilla (hoja `Escala`: Categoría | Monto |
+   Vigencia desde | No remunerativo | Asig. única vez) y `POST /api/escalas/importar` la sube.
    Montos de jornada completa, tal como vienen en la circular. Acepta los nombres publicados
    ("Personal Auxiliar B", "Vendedores A"). Si una fila tiene errores no se carga nada.
    La asignación de única vez se paga solo en el mes exacto de su vigencia.
-2. **Empresas.** `POST /empresas` (razón social, CUIT validado, domicilio y lugar de pago
-   por defecto). `GET /empresas` lista todas con sus empleados activos.
-3. **Empleados.** Uno por uno con `POST /empleados`, o todos juntos: `GET /empleados/plantilla`
+2. **Empresas.** `POST /api/empresas` (razón social, CUIT validado, domicilio y lugar de pago
+   por defecto). `GET /api/empresas` lista todas con sus empleados activos.
+3. **Empleados.** Uno por uno con `POST /api/empleados`, o todos juntos: `GET /api/empleados/plantilla`
    (Legajo | Apellido | Nombre | CUIL | Convenio | Categoría | Fecha ingreso | Jornada (hs) |
-   Fecha egreso) y `POST /empresas/<id>/empleados/importar`. Valida CUIL y categoría; si una
+   Fecha egreso) y `POST /api/empresas/<id>/empleados/importar`. Valida CUIL y categoría; si una
    fila falla no se carga nada. Reimportar actualiza por CUIL. Un mismo CUIL puede estar en
-   varias empresas. `GET /empresas/<id>/empleados` los lista.
-4. **Liquidar el mes.** `POST /empresas/<id>/liquidaciones` liquida a todos los activos del
-   período, o `POST /liquidaciones` a uno solo (`empleado_id`). Datos: `periodo` (AAAA-MM),
+   varias empresas. `GET /api/empresas/<id>/empleados` los lista.
+4. **Liquidar el mes.** `POST /api/empresas/<id>/liquidaciones` liquida a todos los activos del
+   período, o `POST /api/liquidaciones` a uno solo (`empleado_id`). Datos: `periodo` (AAAA-MM),
    `fecha_pago`, `lugar_pago` (si no, el de la empresa), `ultimo_deposito_periodo`,
    `ultimo_deposito_fecha` y `ultimo_deposito_banco`. Opcionales: `inasistencias_injustificadas`,
    `asignacion_extraordinaria` y `tope_base_imponible`.
-5. **Aguinaldo.** `POST /empresas/<id>/sac` o `POST /liquidaciones/sac` con `periodo` 2026-06 o
+5. **Aguinaldo.** `POST /api/empresas/<id>/sac` o `POST /api/liquidaciones/sac` con `periodo` 2026-06 o
    2026-12 (o el mes del egreso). Usa las liquidaciones mensuales ya guardadas del semestre,
    así que primero hay que liquidar los meses.
-6. **Recibos.** `GET /liquidaciones/<id>/recibo.pdf` (uno) o
-   `GET /empresas/<id>/recibos/<AAAA-MM>.pdf` (todos los del período; `?tipo=sac` para el SAC).
+6. **Recibos.** `GET /api/liquidaciones/<id>/recibo.pdf` (uno) o
+   `GET /api/empresas/<id>/recibos/<AAAA-MM>.pdf` (todos los del período; `?tipo=sac` para el SAC).
 
-Convenios sin motor (`POST /convenios` con su lista de categorías) se pueden dar de alta y
+Convenios sin motor (`POST /api/convenios` con su lista de categorías) se pueden dar de alta y
 asignar a empleados, pero liquidarlos devuelve error hasta que se programe su cálculo.
 
 ## Qué calcula (Comercio)

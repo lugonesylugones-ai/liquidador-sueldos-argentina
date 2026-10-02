@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block titulo %}Recibos {{ periodo }}{% endblock %}
+{% block contenido %}
+<p class="muted"><a href="{{ url_for('web.inicio') }}">Empresas</a> /
+  <a href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">{{ empresa.razon_social }}</a> / {{ periodo }}</p>
+<h1>{{ 'Aguinaldo' if tipo == 'sac' else 'Sueldos' }} {{ periodo }}</h1>
+<section>
+  {% if filas %}
+  <div class="acciones" style="margin:0 0 .8rem">
+    <a class="boton" href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=periodo, tipo=tipo) }}">Bajar todos los recibos (PDF)</a>
+    <a class="boton sec" href="{{ url_for('web.liquidar_form', empresa_id=empresa.id, periodo=periodo, tipo=tipo) }}">Volver a liquidar</a>
+  </div>
+  <div class="tabla"><table>
+    <tr><th>Legajo</th><th>Apellido y nombre</th><th>Categoría</th><th class="num">Remunerativo</th>
+        <th class="num">No remunerativo</th><th class="num">Descuentos</th><th class="num">Neto</th><th></th></tr>
+    {% for f in filas %}
+    <tr><td>{{ f.legajo or '' }}</td><td>{{ f.empleado }}</td><td>{{ f.categoria }}</td>
+        <td class="num">{{ f.total_remunerativo|pesos }}</td><td class="num">{{ f.total_no_remunerativo|pesos }}</td>
+        <td class="num">{{ f.total_descuentos|pesos }}</td><td class="num"><strong>{{ f.neto|pesos }}</strong></td>
+        <td><a href="{{ url_for('api.recibo', liq_id=f.id) }}">Recibo</a></td></tr>
+    {% endfor %}
+    <tr><td colspan="6"><strong>Total a pagar</strong></td><td class="num"><strong>$ {{ total|pesos }}</strong></td><td></td></tr>
+  </table></div>
+  {% else %}
+  <p class="muted">No hay recibos de este período.
+    <a href="{{ url_for('web.liquidar_form', empresa_id=empresa.id, periodo=periodo, tipo=tipo) }}">Liquidarlo</a></p>
+  {% endif %}
+</section>
+{% endblock %}

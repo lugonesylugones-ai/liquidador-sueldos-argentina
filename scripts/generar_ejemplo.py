@@ -64,27 +64,27 @@ def main() -> Path:
         app = create_app({"DATABASE": str(Path(tmp) / "ejemplo.db"), "TESTING": True,
                           "CARGAR_ESCALAS_INICIALES": False})
         c = app.test_client()
-        r = c.post("/escalas/importar", data={"archivo": (BytesIO(escala), "escala.xlsx")},
+        r = c.post("/api/escalas/importar", data={"archivo": (BytesIO(escala), "escala.xlsx")},
                    content_type="multipart/form-data")
         assert r.status_code == 201, r.json
-        empresa = c.post("/empresas", json={
+        empresa = c.post("/api/empresas", json={
             "razon_social": "Almacén Ejemplo S.R.L.", "cuit": "30-71234567-1",
             "domicilio": "Av. Corrientes 1234, CABA"}).json["id"]
-        empleados = planilla_empleados(c.get("/empleados/plantilla").data)
+        empleados = planilla_empleados(c.get("/api/empleados/plantilla").data)
         (SALIDA / "empleados_ejemplo.xlsx").write_bytes(empleados)
-        r = c.post(f"/empresas/{empresa}/empleados/importar",
+        r = c.post(f"/api/empresas/{empresa}/empleados/importar",
                    data={"archivo": (BytesIO(empleados), "empleados.xlsx")}, content_type="multipart/form-data")
         assert r.status_code == 201, r.json
         for periodo in ("2026-07", "2026-08", "2026-09"):
-            r = c.post(f"/empresas/{empresa}/liquidaciones", json={**PAGO, "periodo": periodo})
+            r = c.post(f"/api/empresas/{empresa}/liquidaciones", json={**PAGO, "periodo": periodo})
             assert r.status_code == 201 and not r.json["errores"], r.json
         # Diego egresa el 30/09: SAC proporcional del 2° semestre en septiembre.
-        diego = next(e["id"] for e in c.get(f"/empresas/{empresa}/empleados").json if e["legajo"] == "0004")
-        r = c.post("/liquidaciones/sac", json={**PAGO, "empleado_id": diego, "periodo": "2026-09"})
+        diego = next(e["id"] for e in c.get(f"/api/empresas/{empresa}/empleados").json if e["legajo"] == "0004")
+        r = c.post("/api/liquidaciones/sac", json={**PAGO, "empleado_id": diego, "periodo": "2026-09"})
         assert r.status_code == 201, r.json
 
-        mensual = c.get(f"/empresas/{empresa}/recibos/2026-09.pdf")
-        sac = c.get(f"/empresas/{empresa}/recibos/2026-09.pdf?tipo=sac")
+        mensual = c.get(f"/api/empresas/{empresa}/recibos/2026-09.pdf")
+        sac = c.get(f"/api/empresas/{empresa}/recibos/2026-09.pdf?tipo=sac")
         assert mensual.status_code == sac.status_code == 200
         (SALIDA / "recibos_ejemplo_2026-09.pdf").write_bytes(mensual.data)
         (SALIDA / "recibo_sac_ejemplo.pdf").write_bytes(sac.data)

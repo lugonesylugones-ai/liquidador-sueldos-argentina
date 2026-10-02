@@ -64,31 +64,31 @@ def test_hoja_o_encabezado_incorrecto():
 
 
 def test_plantilla_descargable_se_puede_reimportar(client):
-    r = client.get("/escalas/plantilla")
+    r = client.get("/api/escalas/plantilla")
     assert r.status_code == 200
     # Sin montos completados la plantilla se rechaza entera.
     r = subir(client, r.data)
     assert r.status_code == 422
-    assert client.get("/escalas").json == []
+    assert client.get("/api/escalas").json == []
 
 
 def test_importar_con_errores_no_carga_nada(client):
     r = subir(client, xlsx([["Vendedor A", 1000, "01/07/2026"], ["Gerente", 1, "01/07/2026"]]))
     assert r.status_code == 422
-    assert client.get("/escalas").json == []
+    assert client.get("/api/escalas").json == []
 
 
 def test_reimportar_misma_vigencia_actualiza_y_otra_vigencia_suma(client):
     subir(client, xlsx([["Vendedor A", 1000, "01/07/2026"]]))
     subir(client, xlsx([["Vendedor A", 1500, "01/07/2026"]]))
     subir(client, xlsx([["Vendedor A", 2000, "01/09/2026"]]))
-    escalas = client.get("/escalas").json
+    escalas = client.get("/api/escalas").json
     assert [(e["monto"], e["vigencia_desde"]) for e in escalas] == [
         ("2000.00", "2026-09-01"), ("1500.00", "2026-07-01")]
 
 
 def test_solo_xlsx(client):
-    r = client.post("/escalas/importar", data={"archivo": (BytesIO(b"x"), "escala.csv")},
+    r = client.post("/api/escalas/importar", data={"archivo": (BytesIO(b"x"), "escala.csv")},
                     content_type="multipart/form-data")
     assert r.status_code == 400
 

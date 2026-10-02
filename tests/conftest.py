@@ -19,7 +19,7 @@ def client(app):
 
 
 def subir(client, contenido: bytes, nombre: str = "escala.xlsx"):
-    return client.post("/escalas/importar", data={"archivo": (BytesIO(contenido), nombre)},
+    return client.post("/api/escalas/importar", data={"archivo": (BytesIO(contenido), nombre)},
                        content_type="multipart/form-data")
 
 
@@ -34,8 +34,8 @@ def escala_cargada(client):
 
 @pytest.fixture
 def empleado(client, escala_cargada):
-    empresa = client.post("/empresas", json={
+    empresa = client.post("/api/empresas", json={
         "razon_social": "Test SA", "cuit": "30-11111111-8", "domicilio": "Calle 1"}).json["id"]
-    return client.post("/empleados", json={
+    return client.post("/api/empleados", json={
         "empresa_id": empresa, "apellido": "Gómez", "nombre": "Juan", "cuil": "20-22222222-3",
         "categoria": "Vendedor A", "fecha_ingreso": "2020-09-30"}).json["id"]

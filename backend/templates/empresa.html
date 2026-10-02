@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block titulo %}{{ empresa.razon_social }}{% endblock %}
+{% block contenido %}
+<p class="muted"><a href="{{ url_for('web.inicio') }}">Empresas</a> / {{ empresa.razon_social }}</p>
+<h1>{{ empresa.razon_social }}</h1>
+<p class="muted">CUIT {{ empresa.cuit }} · {{ empresa.domicilio }}{% if empresa.lugar_pago %} · Lugar de pago: {{ empresa.lugar_pago }}{% endif %}</p>
+
+<section>
+  <h2>Liquidar</h2>
+  <form method="get" action="{{ url_for('web.liquidar_form', empresa_id=empresa.id) }}">
+    <div class="acciones" style="margin-top:0">
+      <label>Período <input type="month" name="periodo" value="{{ periodo_sugerido }}" required></label>
+      <label>Qué <select name="tipo">
+        <option value="mensual">Sueldo del mes</option>
+        <option value="sac">Aguinaldo (SAC)</option>
+      </select></label>
+      <button>Seguir</button>
+    </div>
+  </form>
+  {% if liquidaciones %}
+  <div class="tabla" style="margin-top:1rem"><table>
+    <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th></tr>
+    {% for l in liquidaciones %}
+    <tr><td>{{ l.periodo }}</td><td>{{ 'Aguinaldo' if l.tipo == 'sac' else 'Mensual' }}</td>
+        <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
+        <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
+            <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Empleados</h2>
+  {% if empleados %}
+  <div class="tabla"><table>
+    <tr><th>Legajo</th><th>Apellido y nombre</th><th>CUIL</th><th>Categoría</th><th>Ingreso</th>
+        <th class="num">Jornada</th><th>Egreso</th><th></th></tr>
+    {% for e in empleados %}
+    <tr{% if e.fecha_egreso %} class="muted"{% endif %}>
+      <td>{{ e.legajo or '' }}</td><td>{{ e.apellido }}, {{ e.nombre }}</td><td>{{ e.cuil }}</td>
+      <td>{{ e.categoria }}{% if e.convenio != 'CCT 130/75' %} <span class="muted">({{ e.convenio }})</span>{% endif %}</td>
+      <td>{{ e.fecha_ingreso }}</td><td class="num">{{ e.jornada_horas }} hs</td><td>{{ e.fecha_egreso or '' }}</td>
+      <td><a href="{{ url_for('web.empresa', empresa_id=empresa.id, editar=e.id) }}#empleado">Editar</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="muted">Sin empleados. Cargalos de a uno o subí la planilla.</p>
+  {% endif %}
+</section>
+
+<section id="empleado">
+  <h2>{{ 'Editar empleado' if empleado else 'Agregar empleado' }}</h2>
+  {% set e = empleado or {} %}
+  <form method="post" action="{{ url_for('web.guardar_empleado', empresa_id=empresa.id) }}">
+    {% if empleado %}<input type="hidden" name="id" value="{{ e.id }}">{% endif %}
+    <div class="grilla">
+      <label>Apellido <input name="apellido" required value="{{ e.apellido or '' }}"></label>
+      <label>Nombre <input name="nombre" required value="{{ e.nombre or '' }}"></label>
+      <label>CUIL <input name="cuil" required value="{{ e.cuil or '' }}" {% if empleado %}readonly{% endif %} placeholder="20-12345678-9"></label>
+      <label>Legajo <input name="legajo" value="{{ e.legajo or '' }}"></label>
+      <label>Convenio <select name="convenio" id="convenio">
+        {% for conv in categorias %}<option{% if conv == (e.convenio or 'CCT 130/75') %} selected{% endif %}>{{ conv }}</option>{% endfor %}
+      </select></label>
+      <label>Categoría <select name="categoria" id="categoria" required data-actual="{{ e.categoria or '' }}"></select></label>
+      <label>Fecha de ingreso <input type="date" name="fecha_ingreso" required value="{{ e.fecha_ingreso or '' }}"></label>
+      <label>Jornada (horas por día) <input type="number" name="jornada_horas" min="1" max="8" value="{{ e.jornada_horas or 8 }}"></label>
+      <label>Fecha de egreso <input type="date" name="fecha_egreso" value="{{ e.fecha_egreso or '' }}"></label>
+    </div>
+    <div class="acciones">
+      <button>Guardar</button>
+      {% if empleado %}<a class="boton sec" href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">Cancelar</a>
+      <span class="muted">El CUIL no se cambia: si está mal, cargalo como empleado nuevo.</span>{% endif %}
+    </div>
+  </form>
+</section>
+
+<section>
+  <h2>Subir planilla de empleados</h2>
+  <p class="muted">Bajá la <a href="{{ url_for('api.plantilla_empleados') }}">plantilla</a>, completala y subila.
+    Si un CUIL ya existe, se actualizan sus datos. Si una fila tiene errores no se carga nada.</p>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('web.importar_empleados', empresa_id=empresa.id) }}">
+    <div class="acciones" style="margin-top:0">
+      <input type="file" name="archivo" accept=".xlsx" required>
+      <button>Subir</button>
+    </div>
+  </form>
+</section>
+
+<script>
+  const categorias = {{ categorias|tojson }};
+  const conv = document.getElementById("convenio"), cat = document.getElementById("categoria");
+  function llenar() {
+    const actual = cat.value || cat.dataset.actual;
+    cat.innerHTML = "";
+    for (const nombre of categorias[conv.value] || []) {
+      const o = new Option(nombre, nombre, false, nombre === actual);
+      cat.add(o);
+    }
+  }
+  conv.addEventListener("change", llenar);
+  llenar();
+</script>
+{% endblock %}

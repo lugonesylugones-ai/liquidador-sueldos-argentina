@@ -19,7 +19,7 @@ def client(tmp_path):
 
 
 def planilla(client, filas):
-    wb = load_workbook(BytesIO(client.get("/empleados/plantilla").data))
+    wb = load_workbook(BytesIO(client.get("/api/empleados/plantilla").data))
     for f in filas:
         wb["Empleados"].append(f)
     buf = BytesIO()
@@ -28,13 +28,13 @@ def planilla(client, filas):
 
 
 def importar(client, empresa, contenido):
-    return client.post(f"/empresas/{empresa}/empleados/importar",
+    return client.post(f"/api/empresas/{empresa}/empleados/importar",
                        data={"archivo": (BytesIO(contenido), "empleados.xlsx")},
                        content_type="multipart/form-data")
 
 
 def empresa(client, cuit="30-71234567-1", razon="Uno SRL"):
-    r = client.post("/empresas", json={"razon_social": razon, "cuit": cuit, "domicilio": "X 1",
+    r = client.post("/api/empresas", json={"razon_social": razon, "cuit": cuit, "domicilio": "X 1",
                                        "lugar_pago": "Bahía Blanca"})
     assert r.status_code == 201, r.json
     return r.json["id"]
@@ -55,10 +55,10 @@ def test_cuit_invalido(texto):
 
 
 def test_instalacion_nueva_trae_categorias_y_escalas_marcadas(client):
-    conv = client.get("/convenios").json
+    conv = client.get("/api/convenios").json
     assert [c["codigo"] for c in conv] == ["CCT 130/75"]
     assert len(conv[0]["categorias"]) == 21
-    escalas = client.get("/escalas").json
+    escalas = client.get("/api/escalas").json
     assert len(escalas) == 63
     verificadas = {e["categoria"] for e in escalas if e["verificada"]}
     assert verificadas == {"Auxiliar B"}
@@ -66,10 +66,10 @@ def test_instalacion_nueva_trae_categorias_y_escalas_marcadas(client):
 
 
 def test_empresa_con_cuit_invalido_o_repetido(client):
-    assert client.post("/empresas", json={"razon_social": "X", "cuit": "30-71234567-8",
+    assert client.post("/api/empresas", json={"razon_social": "X", "cuit": "30-71234567-8",
                                           "domicilio": "Y"}).status_code == 400
     empresa(client)
-    r = client.post("/empresas", json={"razon_social": "Otra", "cuit": "30712345671", "domicilio": "Y"})
+    r = client.post("/api/empresas", json={"razon_social": "Otra", "cuit": "30712345671", "domicilio": "Y"})
     assert r.status_code == 400 and "Ya existe" in r.json["error"]
 
 
@@ -85,7 +85,7 @@ def test_importar_empleados_todo_o_nada(client):
     assert len(r.json["detalle"]) == 2
     assert "dígito verificador" in r.json["detalle"][0]
     assert "categoría" in r.json["detalle"][1] and "jornada" in r.json["detalle"][1]
-    assert client.get(f"/empresas/{e}/empleados").json == []
+    assert client.get(f"/api/empresas/{e}/empleados").json == []
 
 
 def test_mismo_cuil_en_dos_empresas_y_reimportar_actualiza(client):
@@ -95,10 +95,10 @@ def test_mismo_cuil_en_dos_empresas_y_reimportar_actualiza(client):
     assert importar(client, b, planilla(client, [fila])).status_code == 201
     fila[7] = 4
     assert importar(client, a, planilla(client, [fila])).status_code == 201
-    emp_a = client.get(f"/empresas/{a}/empleados").json
+    emp_a = client.get(f"/api/empresas/{a}/empleados").json
     assert len(emp_a) == 1 and emp_a[0]["jornada_horas"] == 4
-    assert client.get(f"/empresas/{b}/empleados").json[0]["jornada_horas"] == 8
-    assert {x["razon_social"]: x["empleados_activos"] for x in client.get("/empresas").json} == \
+    assert client.get(f"/api/empresas/{b}/empleados").json[0]["jornada_horas"] == 8
+    assert {x["razon_social"]: x["empleados_activos"] for x in client.get("/api/empresas").json} == \
         {"Uno SRL": 1, "Dos SA": 1}
 
 
@@ -110,11 +110,11 @@ def test_liquidar_empresa_y_pdf_unico(client):
         ["3", "C", "Tres", "27-33333333-9", "", "Auxiliar B", "20/12/2004", 4, None],
         ["4", "D", "Cuatro", "20-44444444-5", "", "Vendedor A", "01/03/2025", 8, "31/08/2026"],
     ]))
-    r = client.post(f"/empresas/{e}/liquidaciones", json={**PAGO, "periodo": "2026-09", "lugar_pago": ""})
+    r = client.post(f"/api/empresas/{e}/liquidaciones", json={**PAGO, "periodo": "2026-09", "lugar_pago": ""})
     assert r.status_code == 201, r.json
     # D egresó en agosto: no se liquida en septiembre. Netos iguales a los recibos reales.
     assert sorted(x["neto"] for x in r.json["liquidaciones"]) == ["1194626.00", "1252060.00", "651388.00"]
-    pdf = PdfReader(BytesIO(client.get(f"/empresas/{e}/recibos/2026-09.pdf").data))
+    pdf = PdfReader(BytesIO(client.get(f"/api/empresas/{e}/recibos/2026-09.pdf").data))
     assert len(pdf.pages) == 6                           # 3 recibos × original y duplicado
     assert "Bahía Blanca" in pdf.pages[0].extract_text()  # lugar de pago de la empresa
 
@@ -126,12 +126,12 @@ def test_sac_por_empresa(client):
         ["4", "D", "Cuatro", "20-44444444-5", "", "Vendedor A", "01/03/2025", 8, "31/08/2026"],
     ]))
     for periodo in ("2026-07", "2026-08", "2026-09"):
-        client.post(f"/empresas/{e}/liquidaciones", json={**PAGO, "periodo": periodo})
-    r = client.post(f"/empresas/{e}/sac", json={**PAGO, "periodo": "2026-12"})
+        client.post(f"/api/empresas/{e}/liquidaciones", json={**PAGO, "periodo": periodo})
+    r = client.post(f"/api/empresas/{e}/sac", json={**PAGO, "periodo": "2026-12"})
     assert r.status_code == 201, r.json
     netos = {x["legajo"]: x for x in r.json["liquidaciones"]}
     assert set(netos) == {"1", "4"}                      # D trabajó jul-ago: también cobra SAC
-    pdf = PdfReader(BytesIO(client.get(f"/empresas/{e}/recibos/2026-12.pdf?tipo=sac").data))
+    pdf = PdfReader(BytesIO(client.get(f"/api/empresas/{e}/recibos/2026-12.pdf?tipo=sac").data))
     assert "SAC 2° semestre 2026" in pdf.pages[0].extract_text()
 
 
@@ -139,20 +139,20 @@ def test_sac_fuera_de_junio_o_diciembre(client):
     e = empresa(client)
     importar(client, e, planilla(client, [["1", "A", "Uno", "27-30123456-8", "", "Auxiliar B",
                                            "03/07/2017", 8, None]]))
-    emp = client.get(f"/empresas/{e}/empleados").json[0]["id"]
-    client.post("/liquidaciones", json={**PAGO, "empleado_id": emp, "periodo": "2026-09"})
-    r = client.post("/liquidaciones/sac", json={**PAGO, "empleado_id": emp, "periodo": "2026-09"})
+    emp = client.get(f"/api/empresas/{e}/empleados").json[0]["id"]
+    client.post("/api/liquidaciones", json={**PAGO, "empleado_id": emp, "periodo": "2026-09"})
+    r = client.post("/api/liquidaciones/sac", json={**PAGO, "empleado_id": emp, "periodo": "2026-09"})
     assert r.status_code == 400
 
 
 def test_otro_convenio_se_da_de_alta_pero_no_se_liquida(client):
-    r = client.post("/convenios", json={"codigo": "CCT 589/10", "nombre": "Encargados de edificio (SUTERYH)",
+    r = client.post("/api/convenios", json={"codigo": "CCT 589/10", "nombre": "Encargados de edificio (SUTERYH)",
                                         "categorias": ["Encargado permanente con vivienda"]})
     assert r.status_code == 201
     e = empresa(client)
-    r = client.post("/empleados", json={
+    r = client.post("/api/empleados", json={
         "empresa_id": e, "apellido": "X", "nombre": "Y", "cuil": "20-22222222-3", "convenio": "CCT 589/10",
         "categoria": "Encargado permanente con vivienda", "fecha_ingreso": "2020-01-01"})
     assert r.status_code == 201
-    r = client.post("/liquidaciones", json={**PAGO, "empleado_id": r.json["id"], "periodo": "2026-09"})
+    r = client.post("/api/liquidaciones", json={**PAGO, "empleado_id": r.json["id"], "periodo": "2026-09"})
     assert r.status_code == 400 and "motor de cálculo" in r.json["error"]
