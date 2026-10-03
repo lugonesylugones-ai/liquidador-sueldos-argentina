@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block titulo %}Liquidar {{ periodo }}{% endblock %}
 {% block contenido %}
-<p class="muted"><a href="{{ url_for('web.inicio') }}">Empresas</a> /
-  <a href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">{{ empresa.razon_social }}</a> / Liquidar</p>
+<div class="migas"><a href="{{ url_for('web.empresas') }}">Empresas</a> /
+  <a href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">{{ empresa.razon_social }}</a> / Liquidar</div>
 <h1>{{ 'Aguinaldo' if tipo == 'sac' else 'Sueldo' }} {{ periodo }}</h1>
+<p class="sub">{{ empresa.razon_social }}</p>
 
 {% if ya_liquidado %}
 <div class="aviso">Este período ya está liquidado. Si seguís, se recalcula y se reemplazan los recibos.</div>
@@ -38,7 +39,7 @@
           {% if tipo == 'mensual' %}<th>Faltas sin justificar</th>{% endif %}</tr>
       {% for e in empleados %}
       <tr><td>{{ e.apellido }}, {{ e.nombre }}</td><td>{{ e.categoria }}</td><td class="num">{{ e.jornada_horas }} hs</td>
-          {% if tipo == 'mensual' %}<td><input type="number" min="0" max="30" name="inasistencias_{{ e.id }}" placeholder="0" style="width:5rem"></td>{% endif %}</tr>
+          {% if tipo == 'mensual' %}<td><input type="number" min="0" max="30" name="inasistencias_{{ e.id }}" placeholder="0" style="width:5.5rem"></td>{% endif %}</tr>
       {% endfor %}
     </table></div>
     {% if tipo == 'mensual' %}<p class="muted">Cualquier falta sin justificar hace perder el presentismo y descuenta 1/30 por día.</p>{% endif %}

@@ -57,15 +57,19 @@ def crear_convenio():
 
 @bp.get("/escalas/plantilla")
 def descargar_plantilla():
-    return send_file(BytesIO(generar_plantilla()), as_attachment=True,
-                     download_name="plantilla_escala_comercio.xlsx", mimetype=XLSX)
+    convenio = request.args.get("convenio", CONVENIO_COMERCIO)
+    cats = sv.categorias_de(get_db(), convenio)
+    nombre = "comercio" if convenio == CONVENIO_COMERCIO else "".join(c if c.isalnum() else "_" for c in convenio)
+    return send_file(BytesIO(generar_plantilla(categorias=cats)), as_attachment=True,
+                     download_name=f"plantilla_escala_{nombre}.xlsx", mimetype=XLSX)
 
 
 @bp.post("/escalas/importar")
 def importar_escala():
     archivo = archivo_xlsx()
-    n = sv.importar_escala(get_db(), archivo.read(), archivo.filename)
-    return jsonify(importadas=n, convenio=CONVENIO_COMERCIO), 201
+    convenio = request.form.get("convenio") or CONVENIO_COMERCIO
+    n = sv.importar_escala(get_db(), archivo.read(), archivo.filename, convenio)
+    return jsonify(importadas=n, convenio=convenio), 201
 
 
 @bp.get("/escalas")
@@ -125,6 +129,14 @@ def crear_liquidacion():
 @bp.post("/liquidaciones/sac")
 def crear_sac():
     return _liquidar_uno("sac")
+
+
+@bp.post("/liquidaciones/final")
+def crear_final():
+    """Liquidación final: empleado_id, fecha_egreso, causa y los datos de pago."""
+    d = request.get_json(force=True)
+    liq_id, liq = sv.liquidar_egreso(get_db(), sv.requerido(d, "empleado_id"), d)
+    return jsonify(id=liq_id, **liq.to_dict()), 201
 
 
 def _liquidar_empresa(empresa_id: int, tipo: str):

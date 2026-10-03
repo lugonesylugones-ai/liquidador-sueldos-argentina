@@ -3,13 +3,14 @@
 Pensado para usar en la propia compu (sin usuarios ni login). Los formularios
 hacen POST y vuelven con un mensaje; las descargas usan las rutas de /api.
 """
+import json
 from datetime import date
 from decimal import Decimal
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
 from . import servicios as sv
-from .calculo import primer_dia
+from .calculo import CAUSAS_EGRESO, primer_dia
 from .db import get_db
 from .escalas import CONVENIO_COMERCIO
 
@@ -46,18 +47,23 @@ def _archivo():
 @bp.get("/")
 def inicio():
     conn = get_db()
-    return render_template("inicio.html", empresas=sv.empresas(conn),
+    return render_template("inicio.html", empresas=sv.empresas(conn), resumen=sv.resumen_general(conn),
                            escalas=sv.escalas(conn)[:1])
 
 
 # --- Empresas ------------------------------------------------------------------
+@bp.get("/empresas")
+def empresas():
+    return render_template("empresas.html", empresas=sv.empresas(get_db()))
+
+
 @bp.post("/empresas/nueva")
 def crear_empresa():
     try:
         empresa_id = sv.crear_empresa(get_db(), request.form)
     except sv.ErrorDatos as exc:
         _avisar_error(exc)
-        return redirect(url_for("web.inicio"))
+        return redirect(url_for("web.empresas"))
     flash("Empresa creada. Ahora cargá sus empleados.", "ok")
     return redirect(url_for("web.empresa", empresa_id=empresa_id))
 
@@ -152,8 +158,57 @@ def liquidar(empresa_id: int):
     return redirect(url_for("web.liquidaciones", empresa_id=empresa_id, periodo=periodo, tipo=tipo))
 
 
+TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales"}
+
+
 def _titulo(tipo: str, periodo: str) -> str:
     return f"aguinaldo {periodo}" if tipo == "sac" else periodo
+
+
+# --- Liquidación final -----------------------------------------------------------
+def _empleado(empresa_id: int, empleado_id: int):
+    emp = get_db().execute("SELECT * FROM empleados WHERE id = ? AND empresa_id = ?",
+                           (empleado_id, empresa_id)).fetchone()
+    if emp is None:
+        abort(404)
+    return emp
+
+
+@bp.get("/empresas/<int:empresa_id>/empleados/<int:empleado_id>/final")
+def final_form(empresa_id: int, empleado_id: int):
+    empresa = _empresa(empresa_id)
+    emp = _empleado(empresa_id, empleado_id)
+    conn = get_db()
+    previa = conn.execute("SELECT id, periodo, resultado FROM liquidaciones WHERE empleado_id = ? AND tipo = 'final'",
+                          (empleado_id,)).fetchone()
+    datos = {"lugar_pago": empresa["lugar_pago"] or "", **sv.ultimo_pago(conn, empresa_id),
+             "fecha_egreso": emp["fecha_egreso"] or "", "causa": "", "preaviso_otorgado": False}
+    if previa:
+        datos.update(json.loads(previa["resultado"])["liquidacion"].get("egreso") or {})
+    return render_template("final.html", empresa=empresa, emp=emp, causas=CAUSAS_EGRESO,
+                           previa=previa, datos=datos)
+
+
+@bp.post("/empresas/<int:empresa_id>/empleados/<int:empleado_id>/final")
+def final(empresa_id: int, empleado_id: int):
+    _empresa(empresa_id)
+    _empleado(empresa_id, empleado_id)
+    try:
+        liq_id, liq = sv.liquidar_egreso(get_db(), empleado_id, request.form)
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+        return redirect(url_for("web.final_form", empresa_id=empresa_id, empleado_id=empleado_id))
+    flash(f"Liquidación final lista: neto $ {liq.neto:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), "ok")
+    return redirect(url_for("web.liquidacion", liq_id=liq_id))
+
+
+@bp.get("/liquidaciones/<int:liq_id>")
+def liquidacion(liq_id: int):
+    datos = sv.liquidacion(get_db(), liq_id)
+    if datos is None:
+        abort(404)
+    return render_template("liquidacion.html", d=datos, liq=datos["liq"], empresa=_empresa(datos["empresa_id"]),
+                           causas=CAUSAS_EGRESO, titulos=TITULOS)
 
 
 @bp.get("/empresas/<int:empresa_id>/liquidaciones/<periodo>")
@@ -167,26 +222,65 @@ def liquidaciones(empresa_id: int, periodo: str):
     filas = sv.liquidaciones_de(get_db(), empresa_id, periodo, tipo)
     total = sum((Decimal(f["neto"]) for f in filas), Decimal("0"))
     return render_template("liquidaciones.html", empresa=empresa, periodo=periodo, tipo=tipo,
-                           filas=filas, total=total)
+                           filas=filas, total=total, titulos=TITULOS)
 
 
-# --- Escalas -------------------------------------------------------------------
+# --- Escalas y convenios ------------------------------------------------------------
 @bp.get("/escalas")
 def escalas():
-    filas = sv.escalas(get_db())
+    conn = get_db()
+    convenio = request.args.get("convenio", CONVENIO_COMERCIO)
+    if convenio not in sv.categorias(conn):
+        abort(404)
     por_vigencia = {}
-    for f in filas:
+    for f in sv.escalas(conn, convenio):
         por_vigencia.setdefault(f["vigencia_desde"], []).append(f)
-    return render_template("escalas.html", por_vigencia=por_vigencia, convenio=CONVENIO_COMERCIO)
+    return render_template("escalas.html", por_vigencia=por_vigencia, convenio=convenio,
+                           convenios=sv.convenios(conn))
 
 
 @bp.post("/escalas/importar")
 def importar_escala():
+    convenio = request.form.get("convenio") or CONVENIO_COMERCIO
     try:
         archivo = _archivo()
-        n = sv.importar_escala(get_db(), archivo.read(), archivo.filename)
+        n = sv.importar_escala(get_db(), archivo.read(), archivo.filename, convenio)
     except sv.ErrorDatos as exc:
         _avisar_error(exc)
     else:
         flash(f"Se cargaron {n} filas de escala.", "ok")
-    return redirect(url_for("web.escalas"))
+    return redirect(url_for("web.escalas", convenio=convenio))
+
+
+def _lineas(texto: str) -> list:
+    return [l.strip() for l in (texto or "").splitlines() if l.strip()]
+
+
+@bp.get("/convenios")
+def convenios():
+    return render_template("convenios.html", convenios=sv.convenios(get_db()))
+
+
+@bp.post("/convenios/nuevo")
+def crear_convenio():
+    try:
+        codigo = sv.crear_convenio(get_db(), {"codigo": request.form.get("codigo"),
+                                              "nombre": request.form.get("nombre"),
+                                              "categorias": _lineas(request.form.get("categorias"))})
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+    else:
+        flash(f"Convenio {codigo} creado. Ahora cargá su escala.", "ok")
+    return redirect(url_for("web.convenios"))
+
+
+@bp.post("/convenios/categorias")
+def agregar_categorias():
+    codigo = request.form.get("codigo", "")
+    try:
+        n = sv.agregar_categorias(get_db(), codigo, _lineas(request.form.get("categorias")))
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+    else:
+        flash(f"Se agregaron {n} categorías a {codigo}.", "ok")
+    return redirect(url_for("web.convenios"))

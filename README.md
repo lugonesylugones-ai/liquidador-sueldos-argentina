@@ -34,7 +34,11 @@ Con el servidor andando, entrá a http://127.0.0.1:5000:
    datos del último depósito usado y un casillero de faltas sin justificar por empleado.
 4. **Recibos**: la pantalla del período muestra los totales y baja el PDF de todos juntos
    o de cada uno.
-5. **Escalas**: muestra las cargadas (con "Sin verificar" / "Verificada") y sube nuevas.
+5. **Liquidación final**: desde el empleado, botón "Liq. final". Cargás fecha de egreso, causa
+   y si hubo preaviso; reemplaza al sueldo y al aguinaldo de ese mes.
+6. **Escalas**: muestra las de cada convenio (con "Sin verificar" / "Verificada") y sube nuevas.
+7. **Sindicatos**: alta de convenios con sus categorías. Los que no son Comercio se pueden
+   asignar y cargar escalas, pero no se liquidan hasta programar sus reglas.
 
 Está pensado para usarlo en tu propia compu: no tiene usuarios ni contraseña, así que
 no lo publiques en internet tal como está.
@@ -92,6 +96,19 @@ asignar a empleados, pero liquidarlos devuelve error hasta que se programe su c�
 | Jornada parcial | Obra social sobre el equivalente a jornada completa y "Compl. Art. 101" |
 | Redondeo | El neto se redondea para arriba al peso; la diferencia va como no remunerativo |
 | SAC | 50% de la mejor remuneración mensual del semestre × días trabajados / días del semestre; la parte no remunerativa habitual igual, como "SAC s/ no remunerativo" (sin la asignación de única vez). Mismos aportes que el sueldo |
+| Mes incompleto | Mes de ingreso o egreso: sueldo y no remunerativo × días / 30 |
+
+### Liquidación final
+
+| Concepto | Regla |
+|---|---|
+| Días del mes | Como un mes incompleto, con sus aportes |
+| SAC proporcional | Como el SAC, hasta la fecha de egreso |
+| Vacaciones no gozadas | Días del art. 150 (14/21/28/35 según antigüedad al 31/12) × días trabajados en el año / 365, menos los ya tomados; valor día = remuneración mensual / 25, también sobre el no remunerativo; más su SAC (1/12) |
+| Indemnización art. 245 | Despido sin causa: mejor remuneración mensual normal y habitual del último año (con no remunerativo, sin SAC) × años (fracción > 3 meses = 1 año), mínimo un mes. Con tope opcional y piso del 67% (Vizzoti). Fallecimiento: 50% (art. 248). Nada en período de prueba (6 meses si ingresó desde el 9/7/2024, si no 3) |
+| Preaviso art. 231/232 | Despido sin causa sin preaviso: 15 días (prueba), 1 mes (< 5 años) o 2 meses, más su SAC |
+| Integración art. 233 | Despido sin causa sin preaviso: días que faltan para fin de mes / 30, más su SAC |
+| Aportes | Indemnizaciones, preaviso, integración y vacaciones no gozadas sin aportes ni cuota sindical |
 
 `tests/test_recibos_reales.py` reproduce al centavo ocho recibos reales de julio a septiembre 2026.
 `ejemplos/` trae la escala jul-sep 2026 y la planilla de empleados (ficticios) listas para
@@ -105,6 +122,8 @@ neto en números y letras, lugar y fecha de pago y constancia de recepción del 
 
 - Horas extra, vacaciones, licencias y feriados (Día del Empleado de Comercio).
 - Contribuciones patronales y costo empleador.
+- Liquidación final: validar contra un recibo real (hoy sigue la LCT, no se contrastó con un caso real).
+- Motor de cálculo para otros convenios (SUTERYH, gastronómicos, etc.).
 - Retención de ganancias.
 - Lectura de escalas directamente desde el PDF de FAECYS.
 - Gastronomía y FATERYH.

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block titulo %}{{ d.apellido }} {{ liq.periodo }}{% endblock %}
+{% block contenido %}
+<div class="migas"><a href="{{ url_for('web.empresas') }}">Empresas</a> /
+  <a href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">{{ empresa.razon_social }}</a> /
+  <a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=liq.periodo, tipo=liq.tipo) }}">{{ liq.periodo }}</a></div>
+<h1>{{ d.apellido }}, {{ d.nombre }}</h1>
+<p class="sub">{{ {'mensual': 'Sueldo', 'sac': 'Aguinaldo', 'final': 'Liquidación final'}[liq.tipo] }} {{ liq.periodo }} · {{ liq.categoria }} · {{ liq.jornada_horas }} hs
+  {% if liq.egreso %} · Egreso {{ liq.egreso.fecha }}: {{ causas.get(liq.egreso.causa, liq.egreso.causa) }}{% endif %}</p>
+<div class="tiles">
+  <div class="tile g2"><div class="valor">$ {{ liq.total_remunerativo|pesos }}</div><div class="rotulo">Remunerativo</div></div>
+  <div class="tile g3"><div class="valor">$ {{ liq.total_no_remunerativo|pesos }}</div><div class="rotulo">No remunerativo{% if liq.indemnizatorios() %} e indemnizaciones{% endif %}</div></div>
+  <div class="tile g4"><div class="valor">$ {{ liq.total_descuentos|pesos }}</div><div class="rotulo">Descuentos</div></div>
+  <div class="tile g1"><div class="valor">$ {{ liq.neto|pesos }}</div><div class="rotulo">Neto a cobrar</div></div>
+</div>
+<section>
+  <div class="acciones" style="margin:0 0 14px">
+    <a class="boton" href="{{ url_for('api.recibo', liq_id=d.id) }}">Bajar recibo (PDF)</a>
+    {% if liq.tipo == 'final' %}<a class="boton sec" href="{{ url_for('web.final_form', empresa_id=empresa.id, empleado_id=d.empleado_id) }}">Corregir</a>{% endif %}
+  </div>
+  <div class="tabla"><table>
+    <tr><th>Cód.</th><th>Concepto</th><th>Cómo se calculó</th><th class="num">Remun.</th><th class="num">No remun.</th><th class="num">Descuentos</th></tr>
+    {% for c in liq.conceptos %}
+    <tr><td class="muted">{{ c.codigo }}</td>
+        <td>{{ c.descripcion }}{% if c.tipo == 'indemnizacion' %} <span class="chip rosa">sin aportes</span>{% endif %}</td>
+        <td class="muted" style="white-space:normal;min-width:220px">{{ c.detalle }}</td>
+        <td class="num">{{ c.importe|pesos if c.tipo == 'remunerativo' else '' }}</td>
+        <td class="num">{{ c.importe|pesos if c.tipo in ('no_remunerativo', 'indemnizacion') else '' }}</td>
+        <td class="num">{{ c.importe|pesos if c.tipo == 'descuento' else '' }}</td></tr>
+    {% endfor %}
+    <tr class="total"><td></td><td>Totales</td><td></td><td class="num">{{ liq.total_remunerativo|pesos }}</td>
+        <td class="num">{{ liq.total_no_remunerativo|pesos }}</td><td class="num">{{ liq.total_descuentos|pesos }}</td></tr>
+  </table></div>
+</section>
+{% endblock %}

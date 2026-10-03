@@ -22,7 +22,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .calculo import Liquidacion
+from .calculo import CAUSAS_EGRESO, Liquidacion
 from .formato import numero_a_letras, pesos
 
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -62,6 +62,19 @@ def _anios(liq: Liquidacion) -> str:
 
 
 def _filas_periodo(liq: Liquidacion, normal) -> list:
+    if liq.tipo == "final":
+        eg = liq.egreso or {}
+        causa = CAUSAS_EGRESO.get(eg.get("causa"), eg.get("causa", ""))
+        preaviso = "otorgado" if eg.get("preaviso_otorgado") else "no otorgado"
+        return [
+            [Paragraph(f"<b>Período:</b> {_periodo_texto(liq.periodo)} · liquidación final", normal),
+             Paragraph(f"<b>Días trabajados:</b> {liq.dias_trabajados}", normal)],
+            [Paragraph(f"<b>Egreso:</b> {_f(date.fromisoformat(eg['fecha']))} · {causa}", normal),
+             Paragraph(f"<b>Antigüedad:</b> {_anios(liq)}", normal)],
+            [Paragraph(f"<b>Básico de escala:</b> $ {pesos(liq.basico_escala)} "
+                       f"(vigente desde {_f(liq.vigencia_escala)})", normal),
+             Paragraph(f"<b>Preaviso:</b> {preaviso}", normal)],
+        ]
     if liq.tipo == "sac":
         semestre = "1°" if int(liq.periodo[5:]) <= 6 else "2°"
         return [
@@ -126,11 +139,13 @@ def _copia(d: DatosRecibo, leyenda: str, estilos) -> list:
     columnas = ("remunerativo", "no_remunerativo", "descuento")
     filas = [["Cód.", "Concepto", "Determinación", "Remun.", "No remun.", "Descuentos"]]
     for c in liq.conceptos:
-        importes = [pesos(c.importe) if c.tipo == t else "" for t in columnas]
-        filas.append([c.codigo, Paragraph(c.descripcion, chico), Paragraph(c.detalle, chico), *importes])
+        tipo = "no_remunerativo" if c.tipo == "indemnizacion" else c.tipo
+        importes = [pesos(c.importe) if tipo == t else "" for t in columnas]
+        desc = c.descripcion + (" <i>(sin aportes)</i>" if c.tipo == "indemnizacion" else "")
+        filas.append([c.codigo, Paragraph(desc, chico), Paragraph(c.detalle, chico), *importes])
     filas.append(["", Paragraph("<b>Totales</b>", chico), Paragraph("Bruto remunerativo / no remunerativo / descuentos", chico),
                   pesos(liq.total_remunerativo), pesos(liq.total_no_remunerativo), pesos(liq.total_descuentos)])
-    tabla = Table(filas, colWidths=[13 * mm, 45 * mm, 56 * mm, 22 * mm, 22 * mm, 22 * mm], repeatRows=1)
+    tabla = Table(filas, colWidths=[16 * mm, 42 * mm, 56 * mm, 22 * mm, 22 * mm, 22 * mm], repeatRows=1)
     tabla.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8),
         ("FONT", (0, 1), (-1, -1), "Helvetica", 8),

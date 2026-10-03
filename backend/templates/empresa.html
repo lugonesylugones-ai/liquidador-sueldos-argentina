@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block titulo %}{{ empresa.razon_social }}{% endblock %}
 {% block contenido %}
-<p class="muted"><a href="{{ url_for('web.inicio') }}">Empresas</a> / {{ empresa.razon_social }}</p>
+<div class="migas"><a href="{{ url_for('web.empresas') }}">Empresas</a> / {{ empresa.razon_social }}</div>
 <h1>{{ empresa.razon_social }}</h1>
-<p class="muted">CUIT {{ empresa.cuit }} · {{ empresa.domicilio }}{% if empresa.lugar_pago %} · Lugar de pago: {{ empresa.lugar_pago }}{% endif %}</p>
+<p class="sub">CUIT {{ empresa.cuit }} · {{ empresa.domicilio }}{% if empresa.lugar_pago %} · Lugar de pago: {{ empresa.lugar_pago }}{% endif %}</p>
 
 <section>
   <h2>Liquidar</h2>
@@ -21,7 +21,7 @@
   <div class="tabla" style="margin-top:1rem"><table>
     <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th></tr>
     {% for l in liquidaciones %}
-    <tr><td>{{ l.periodo }}</td><td>{{ 'Aguinaldo' if l.tipo == 'sac' else 'Mensual' }}</td>
+    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
             <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>
@@ -41,7 +41,8 @@
       <td>{{ e.legajo or '' }}</td><td>{{ e.apellido }}, {{ e.nombre }}</td><td>{{ e.cuil }}</td>
       <td>{{ e.categoria }}{% if e.convenio != 'CCT 130/75' %} <span class="muted">({{ e.convenio }})</span>{% endif %}</td>
       <td>{{ e.fecha_ingreso }}</td><td class="num">{{ e.jornada_horas }} hs</td><td>{{ e.fecha_egreso or '' }}</td>
-      <td><a href="{{ url_for('web.empresa', empresa_id=empresa.id, editar=e.id) }}#empleado">Editar</a></td>
+      <td><a class="boton chico sec" href="{{ url_for('web.empresa', empresa_id=empresa.id, editar=e.id) }}#empleado">Editar</a>
+          <a class="boton chico sec" href="{{ url_for('web.final_form', empresa_id=empresa.id, empleado_id=e.id) }}">Liq. final</a></td>
     </tr>
     {% endfor %}
   </table></div>

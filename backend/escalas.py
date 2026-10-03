@@ -92,8 +92,12 @@ def agregar_fila(ws, categoria: str, vigencia: date, monto=None, no_rem=None, as
     ws.cell(row=ws.max_row, column=3).number_format = "DD/MM/YYYY"
 
 
-def generar_plantilla(ejemplo: dict | None = None, vigencia: date | None = None) -> bytes:
-    """Devuelve un .xlsx con la plantilla. `ejemplo` = {categoria: monto} opcional."""
+def generar_plantilla(ejemplo: dict | None = None, vigencia: date | None = None,
+                      categorias: list | None = None) -> bytes:
+    """Devuelve un .xlsx con la plantilla. `ejemplo` = {categoria: monto} opcional.
+
+    `categorias`: las del convenio; por defecto las de Comercio.
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = HOJA
@@ -107,7 +111,7 @@ def generar_plantilla(ejemplo: dict | None = None, vigencia: date | None = None)
     ws.column_dimensions["D"].width = 18
     ws.column_dimensions["E"].width = 18
     vigencia = vigencia or date.today().replace(day=1)
-    for cat in CATEGORIAS_COMERCIO:
+    for cat in categorias or CATEGORIAS_COMERCIO:
         valor = (ejemplo or {}).get(cat)
         # `ejemplo` acepta {cat: monto} o {cat: (monto, no_remunerativo[, asig_unica])}
         montos = list(valor) if isinstance(valor, tuple) else [valor]
@@ -123,7 +127,7 @@ def generar_plantilla(ejemplo: dict | None = None, vigencia: date | None = None)
         "Si el acuerdo cambia la suma no remunerativa mes a mes, cargá una fila por mes.",
         "Asig. única vez: asignación extraordinaria no remunerativa; se paga solo en el mes de esa vigencia. Vacío = 0.",
         "Para un acuerdo nuevo, agregá filas con la nueva vigencia; no borres las anteriores.",
-        "Las categorías tienen que coincidir con las del CCT 130/75 listadas en la plantilla.",
+        "Las categorías tienen que coincidir con las del convenio listadas en la plantilla.",
     ):
         ayuda.append([linea])
     ayuda.column_dimensions["A"].width = 100
@@ -167,8 +171,14 @@ def _parse_monto(valor, permitir_cero: bool = False) -> Decimal:
     return monto.quantize(Decimal("0.01"))
 
 
-def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
-    """Lee y valida la plantilla. No toca la base."""
+def leer_plantilla(contenido: bytes, categorias: list | None = None) -> ResultadoImportacion:
+    """Lee y valida la plantilla. No toca la base.
+
+    Sin `categorias` valida contra Comercio (acepta los nombres publicados, ver
+    `normalizar_categoria`); con `categorias` busca el nombre exacto, sin
+    distinguir mayúsculas.
+    """
+    por_nombre = {" ".join(c.lower().split()): c for c in categorias} if categorias else None
     res = ResultadoImportacion()
     try:
         wb = load_workbook(BytesIO(contenido), data_only=True)
@@ -193,7 +203,10 @@ def leer_plantilla(contenido: bytes) -> ResultadoImportacion:
             continue
         cat_raw, monto_raw, vig_raw, no_rem_raw, asig_raw = fila
         errores_fila = []
-        cat = normalizar_categoria(cat_raw)
+        if por_nombre is None:
+            cat = normalizar_categoria(cat_raw)
+        else:
+            cat = por_nombre.get(" ".join(str(cat_raw or "").lower().split()))
         if cat is None:
             errores_fila.append(f"categoría desconocida {cat_raw!r}")
         try:

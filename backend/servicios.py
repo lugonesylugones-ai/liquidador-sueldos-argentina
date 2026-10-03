@@ -245,12 +245,31 @@ def importar_empleados(conn, empresa_id: int, contenido: bytes) -> int:
     return len(filas)
 
 
-def importar_escala(conn, contenido: bytes, nombre_archivo: str) -> int:
-    res = leer_plantilla(contenido)
+def categorias_de(conn, convenio: str) -> list:
+    cats = categorias(conn)
+    if convenio not in cats:
+        raise ErrorDatos(f"El convenio {convenio} no existe")
+    return cats[convenio]
+
+
+def importar_escala(conn, contenido: bytes, nombre_archivo: str, convenio: str = CONVENIO_COMERCIO) -> int:
+    cats = categorias_de(conn, convenio)
+    if not cats:
+        raise ErrorDatos(f"El convenio {convenio} no tiene categorías: cargalas primero")
+    res = leer_plantilla(contenido, None if convenio == CONVENIO_COMERCIO else cats)
     if not res.ok:
         # No se carga nada si hay una sola fila mal: evita escalas a medias.
         raise ErrorDatos("La plantilla tiene errores, no se cargó nada", res.errores)
-    return guardar_escala(conn, res.filas, fuente=f"Importada de {nombre_archivo}")
+    return guardar_escala(conn, res.filas, convenio, fuente=f"Importada de {nombre_archivo}")
+
+
+def agregar_categorias(conn, convenio: str, nombres: list) -> int:
+    existentes = categorias_de(conn, convenio)
+    nuevas = [n for n in dict.fromkeys(" ".join(n.split()) for n in nombres) if n and n not in existentes]
+    for orden, nombre in enumerate(nuevas, start=len(existentes)):
+        conn.execute("INSERT INTO categorias (convenio, nombre, orden) VALUES (?, ?, ?)", (convenio, nombre, orden))
+    conn.commit()
+    return len(nuevas)
 
 
 # --- Liquidaciones -------------------------------------------------------------
@@ -508,3 +527,19 @@ def pdf_recibos_empresa(conn, empresa_id: int, periodo_: str, tipo: str) -> tupl
     if not rows:
         return None
     return _pdf(rows), f"recibos_{rows[0]['cuit']}_{periodo_}_{tipo}.pdf"
+
+
+def resumen_general(conn) -> dict:
+    """Números del tablero: empresas, empleados activos y el último mes liquidado."""
+    r = conn.execute("""SELECT (SELECT COUNT(*) FROM empresas) AS empresas,
+                               (SELECT COUNT(*) FROM empleados WHERE fecha_egreso IS NULL) AS activos""").fetchone()
+    ultimo = conn.execute("SELECT MAX(periodo) FROM liquidaciones WHERE tipo = 'mensual'").fetchone()[0]
+    neto = Decimal("0")
+    recibos = 0
+    if ultimo:
+        for f in conn.execute("SELECT resultado FROM liquidaciones WHERE tipo = 'mensual' AND periodo = ?", (ultimo,)):
+            neto += Decimal(json.loads(f["resultado"])["liquidacion"]["neto"])
+            recibos += 1
+    return {"empresas": r["empresas"], "activos": r["activos"], "ultimo_periodo": ultimo,
+            "neto_ultimo": neto, "recibos_ultimo": recibos,
+            "convenios": conn.execute("SELECT COUNT(*) FROM convenios").fetchone()[0]}

@@ -4,62 +4,118 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block titulo %}Liquidador{% endblock %} · Liquidador de sueldos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    :root { --fondo: #f6f7f9; --panel: #fff; --texto: #1b2733; --suave: #5b6b7a; --borde: #d5dbe1;
-            --acento: #1f5fa8; --ok: #e3f4e8; --ok-t: #1d5e33; --error: #fbe7e7; --error-t: #8a1f1f;
-            --aviso: #fff4d6; --aviso-t: #6b4e00; }
-    @media (prefers-color-scheme: dark) {
-      :root { --fondo: #14181d; --panel: #1d232a; --texto: #e3e8ee; --suave: #9aa8b5; --borde: #333d48;
-              --acento: #7fb0ea; --ok: #183524; --ok-t: #9fdcb3; --error: #3a1d1d; --error-t: #f2b0b0;
-              --aviso: #3a3015; --aviso-t: #f0d68a; }
+    :root {
+      --fondo: #3a0f36; --fondo-2: #2a0a27; --lateral: #4f1748; --panel: #4a1543; --panel-2: #561a4e;
+      --texto: #fbeef8; --suave: #cfa9c7; --borde: rgba(255,255,255,.09); --campo: rgba(0,0,0,.22);
+      --g1: linear-gradient(90deg, #ff2fb4, #ff6ad5);
+      --g2: linear-gradient(90deg, #b13cff, #3a7bff);
+      --g3: linear-gradient(90deg, #ff5a36, #ff3fa4);
+      --g4: linear-gradient(90deg, #ffd83b, #ff9f1c);
+      --acento: #ff5ccf; --ok: #3ee6a0; --error: #ff6b81; --aviso: #ffcf4a;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--fondo); color: var(--texto); }
-    header { background: var(--panel); border-bottom: 1px solid var(--borde); }
-    nav, main { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
-    nav { display: flex; gap: 1.2rem; align-items: center; height: 52px; flex-wrap: wrap; }
-    nav strong { margin-right: auto; }
+    html, body { margin: 0; }
+    html { background: var(--fondo-2); }
+    body { font: 14.5px/1.5 "Poppins", system-ui, sans-serif; color: var(--texto);
+           background: radial-gradient(1200px 700px at 80% -10%, #5a1a52 0%, transparent 60%), linear-gradient(160deg, var(--fondo), var(--fondo-2));
+           background-attachment: fixed; min-height: 100vh; }
     a { color: var(--acento); }
-    nav a { text-decoration: none; }
-    main { padding-top: 1.2rem; padding-bottom: 3rem; }
-    h1 { font-size: 1.5rem; margin: .2rem 0 1rem; }
-    h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
-    section { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-    .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .7rem 1rem; }
-    label { display: flex; flex-direction: column; font-size: .85rem; color: var(--suave); gap: .2rem; }
-    input, select { font: inherit; padding: .4rem .5rem; border: 1px solid var(--borde); border-radius: 5px;
-                    background: var(--fondo); color: var(--texto); min-width: 0; }
-    button, .boton { font: inherit; padding: .45rem .9rem; border-radius: 5px; border: 1px solid var(--acento);
-                     background: var(--acento); color: var(--panel); cursor: pointer; text-decoration: none; display: inline-block; }
-    .boton.sec { background: transparent; color: var(--acento); }
-    .acciones { display: flex; gap: .6rem; align-items: end; flex-wrap: wrap; margin-top: .8rem; }
+    .app { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
+    aside { background: var(--lateral); padding: 28px 0; display: flex; flex-direction: column; gap: 4px;
+            box-shadow: 4px 0 24px rgba(0,0,0,.25); position: sticky; top: 0; height: 100vh; }
+    .marca { font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: .95rem; padding: 0 26px 26px; }
+    .marca small { display: block; color: var(--suave); font-weight: 400; letter-spacing: 0; text-transform: none; font-size: .78rem; }
+    aside a { display: flex; align-items: center; gap: 12px; padding: 10px 26px; color: var(--texto);
+              text-decoration: none; border-left: 3px solid transparent; font-size: .92rem; }
+    aside a:hover { background: rgba(255,255,255,.04); }
+    aside a.activo { color: #ffd83b; border-left-color: #ffd83b; background: rgba(255,216,59,.06); }
+    aside svg { width: 18px; height: 18px; flex: none; }
+    aside .pie { margin-top: auto; padding: 0 26px; color: var(--suave); font-size: .75rem; }
+    main { padding: 28px 32px 48px; max-width: 1180px; width: 100%; min-width: 0; }
+    h1 { font-size: 1.45rem; font-weight: 600; margin: 0 0 4px; }
+    h2 { font-size: .95rem; font-weight: 600; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .sub { color: var(--suave); margin: 0 0 22px; }
+    .migas { color: var(--suave); font-size: .82rem; margin-bottom: 6px; }
+    .migas a { color: var(--suave); }
+    section { background: var(--panel); border: 1px solid var(--borde); border-radius: 14px; padding: 20px 22px;
+              margin-bottom: 18px; box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+    .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .dos > section { margin-bottom: 0; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .tile { border-radius: 14px; padding: 16px 18px; color: #fff; box-shadow: 0 10px 26px rgba(0,0,0,.25); }
+    .tile.g1 { background: var(--g1); } .tile.g2 { background: var(--g2); }
+    .tile.g3 { background: var(--g3); } .tile.g4 { background: var(--g4); color: #3a1300; }
+    .tile .valor { font-size: clamp(1.1rem, 1.7vw, 1.5rem); white-space: nowrap; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .tile .rotulo { font-size: .8rem; opacity: .9; }
+    .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 16px; }
+    label { display: flex; flex-direction: column; font-size: .8rem; color: var(--suave); gap: 5px; }
+    label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--texto); font-size: .9rem; }
+    input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px;
+                    background: var(--campo); color: var(--texto); min-width: 0; color-scheme: dark; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid var(--acento); outline-offset: 0; }
+    input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--acento); }
+    select option { background: var(--panel-2); }
+    button, .boton { font: inherit; font-weight: 500; padding: 9px 18px; border-radius: 999px; border: 0;
+                     background: var(--g1); color: #fff; cursor: pointer; text-decoration: none; display: inline-block;
+                     box-shadow: 0 6px 18px rgba(255,47,180,.3); }
+    button:disabled { opacity: .45; cursor: default; }
+    .boton.sec { background: transparent; color: var(--texto); border: 1px solid var(--borde); box-shadow: none; }
+    .boton.chico { padding: 4px 12px; font-size: .8rem; }
+    .acciones { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-top: 14px; }
     .tabla { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: .92rem; }
-    th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--borde); white-space: nowrap; }
-    th { color: var(--suave); font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+    th { color: var(--suave); font-weight: 500; font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; }
+    tbody tr:hover, table tr:hover td { background: rgba(255,255,255,.025); }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .muted { color: var(--suave); }
-    .msg { padding: .6rem .8rem; border-radius: 6px; margin-bottom: .5rem; }
-    .msg.ok { background: var(--ok); color: var(--ok-t); }
-    .msg.error { background: var(--error); color: var(--error-t); }
-    .msg.detalle { background: var(--error); color: var(--error-t); margin-left: 1.2rem; font-size: .9rem; }
-    .aviso { background: var(--aviso); color: var(--aviso-t); padding: .6rem .8rem; border-radius: 6px; margin-bottom: .8rem; }
-    .chip { font-size: .78rem; padding: .1rem .45rem; border-radius: 99px; background: var(--aviso); color: var(--aviso-t); }
-    .chip.ok { background: var(--ok); color: var(--ok-t); }
+    tr.total td { font-weight: 600; border-bottom: 0; }
+    .muted, tr.muted td { color: var(--suave); }
+    .msg { padding: 10px 14px; border-radius: 10px; margin-bottom: 8px; border-left: 4px solid; background: rgba(0,0,0,.2); }
+    .msg.ok { border-color: var(--ok); } .msg.error, .msg.detalle { border-color: var(--error); }
+    .msg.detalle { margin-left: 20px; font-size: .88rem; }
+    .aviso { border-left: 4px solid var(--aviso); background: rgba(255,207,74,.08); padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; }
+    .chip { font-size: .72rem; padding: 2px 9px; border-radius: 99px; background: rgba(255,207,74,.15); color: var(--aviso); white-space: nowrap; }
+    .chip.ok { background: rgba(62,230,160,.14); color: var(--ok); }
+    .chip.rosa { background: rgba(255,92,207,.15); color: var(--acento); }
     details summary { cursor: pointer; color: var(--acento); }
+    .barra { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+    .barra span { display: block; height: 100%; border-radius: 99px; }
+    @media (max-width: 820px) {
+      .app { grid-template-columns: minmax(0, 1fr); }
+      aside { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px 8px; gap: 0; }
+      .marca { width: 100%; padding: 4px 12px 10px; }
+      aside a { padding: 8px 12px; border-left: 0; border-bottom: 2px solid transparent; }
+      aside a.activo { border-bottom-color: #ffd83b; }
+      aside .pie { display: none; }
+      main { padding: 20px 16px 40px; }
+      .dos { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <header><nav>
-    <strong>Liquidador de sueldos</strong>
-    <a href="{{ url_for('web.inicio') }}">Empresas</a>
-    <a href="{{ url_for('web.escalas') }}">Escalas</a>
-  </nav></header>
+{% set seccion = request.endpoint or '' %}
+<div class="app">
+  <aside>
+    <div class="marca">Liquidador<small>Sueldos · Argentina</small></div>
+    <a href="{{ url_for('web.inicio') }}" class="{{ 'activo' if seccion in ('web.inicio',) }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Tablero</a>
+    <a href="{{ url_for('web.empresas') }}" class="{{ 'activo' if seccion.startswith('web.empresa') or seccion in ('web.liquidar_form','web.liquidaciones','web.liquidacion','web.final_form') }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M8 8h3M8 12h3M8 16h3M3 21h18"/></svg>Empresas</a>
+    <a href="{{ url_for('web.escalas') }}" class="{{ 'activo' if seccion == 'web.escalas' }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Escalas</a>
+    <a href="{{ url_for('web.convenios') }}" class="{{ 'activo' if seccion == 'web.convenios' }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/></svg>Sindicatos</a>
+    <div class="pie">Uso local · sin usuarios</div>
+  </aside>
   <main>
     {% for categoria, mensaje in get_flashed_messages(with_categories=true) %}
       <div class="msg {{ categoria }}">{{ mensaje }}</div>
     {% endfor %}
     {% block contenido %}{% endblock %}
   </main>
+</div>
 </body>
 </html>
