@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS liquidaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empleado_id INTEGER NOT NULL REFERENCES empleados(id),
     periodo TEXT NOT NULL,            -- YYYY-MM (para SAC, el mes de pago)
-    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac')),
+    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac', 'final')),
     fecha_pago TEXT NOT NULL,
     lugar_pago TEXT NOT NULL,
     resultado TEXT NOT NULL,          -- JSON con conceptos y totales
@@ -77,7 +77,26 @@ def connect(path: str) -> sqlite3.Connection:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    _migrar_tipo_final(conn)
     conn.commit()
+
+
+def _migrar_tipo_final(conn: sqlite3.Connection) -> None:
+    """Bases creadas antes de la liquidación final: amplía el CHECK de liquidaciones.tipo."""
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'liquidaciones'"
+                       ).fetchone()[0]
+    if "'final'" in sql:
+        return
+    nueva = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS liquidaciones"):].split(";")[0]
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with conn:
+            conn.execute("ALTER TABLE liquidaciones RENAME TO liquidaciones_vieja")
+            conn.execute(nueva)
+            conn.execute("INSERT INTO liquidaciones SELECT * FROM liquidaciones_vieja")
+            conn.execute("DROP TABLE liquidaciones_vieja")
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def get_db() -> sqlite3.Connection:

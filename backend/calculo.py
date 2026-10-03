@@ -15,9 +15,11 @@ Alcance de esta versión:
   sobre el equivalente a jornada completa.
 - Neto redondeado para arriba al peso entero; la diferencia va como "Redondeo".
 
-SAC: ver `liquidar_sac`.
+- Mes incompleto (ingreso o egreso en el mes): sueldo y no remunerativo × días / 30.
 
-Fuera de alcance (todavía): horas extra, vacaciones, licencias y ganancias.
+SAC: ver `liquidar_sac`. Liquidación final (egreso): ver `liquidar_final`.
+
+Fuera de alcance (todavía): horas extra, vacaciones gozadas, licencias y ganancias.
 """
 from calendar import monthrange
 from dataclasses import dataclass, field, asdict
@@ -71,6 +73,18 @@ def anios_cumplidos(desde: date, hasta: date) -> int:
     return anios
 
 
+def dias_del_mes(periodo: str, fecha_ingreso: date, fecha_egreso: date | None = None) -> int:
+    """Días a pagar en el mes, sobre 30 (mes comercial): 30 si trabajó el mes entero."""
+    inicio, fin = primer_dia(periodo), ultimo_dia(periodo)
+    desde = max(inicio, fecha_ingreso)
+    hasta = min(fin, fecha_egreso) if fecha_egreso else fin
+    if hasta < desde:
+        return 0
+    if desde == inicio and hasta == fin:
+        return 30
+    return min(30, (hasta - desde).days + 1)
+
+
 def _pct(valor: Decimal) -> str:
     texto = f"{valor * 100:.2f}".rstrip("0").rstrip(".")
     return texto.replace(".", ",") + "%"
@@ -81,7 +95,7 @@ class Concepto:
     codigo: str
     descripcion: str
     detalle: str          # cómo se determinó (art. 140 inc. c LCT)
-    tipo: str             # "remunerativo" | "no_remunerativo" | "descuento"
+    tipo: str             # "remunerativo" | "no_remunerativo" | "indemnizacion" | "descuento"
     importe: Decimal
 
 
@@ -100,7 +114,9 @@ class Liquidacion:
     total_no_remunerativo: Decimal = Decimal("0")
     total_descuentos: Decimal = Decimal("0")
     neto: Decimal = Decimal("0")
-    tipo: str = "mensual"          # "mensual" | "sac"
+    tipo: str = "mensual"          # "mensual" | "sac" | "final"
+    # Solo en la liquidación final: causa del egreso, fecha y si se otorgó preaviso.
+    egreso: dict | None = None
 
     def de_tipo(self, tipo: str):
         return [c for c in self.conceptos if c.tipo == tipo]
@@ -113,6 +129,10 @@ class Liquidacion:
 
     def descuentos(self):
         return self.de_tipo("descuento")
+
+    def indemnizatorios(self):
+        """Conceptos de la liquidación final que no llevan aportes (indemnizaciones, vacaciones no gozadas)."""
+        return self.de_tipo("indemnizacion")
 
     def to_dict(self) -> dict:
         def conv(v):
@@ -133,6 +153,7 @@ class Liquidacion:
                      "total_no_remunerativo", "total_descuentos", "neto")
         datos = {k: (Decimal(v) if k in decimales else v) for k, v in d.items()}
         datos["vigencia_escala"] = date.fromisoformat(d["vigencia_escala"])
+        datos.setdefault("egreso", None)
         datos["conceptos"] = [Concepto(**{**c, "importe": Decimal(c["importe"])}) for c in d["conceptos"]]
         return cls(**datos)
 
@@ -162,6 +183,62 @@ def _bloque(liq: Liquidacion, *, tipo: str, sufijo: str, monto: Decimal, desc_mo
             f"{_pct(PORC_PRESENTISMO)} s/ $ {pesos(monto + antiguedad)}", tipo, presentismo))
 
 
+def _haberes_comercio(
+    *,
+    periodo: str,
+    categoria: str,
+    basico: Decimal,
+    vigencia_escala: date,
+    fecha_ingreso: date,
+    no_remunerativo: Decimal = Decimal("0"),
+    jornada_horas: int = HORAS_JORNADA_COMPLETA,
+    asignacion_extraordinaria: Decimal = Decimal("0"),
+    inasistencias_injustificadas: int = 0,
+    dias: int = 30,
+) -> Liquidacion:
+    """Haberes del mes sin aportes. Ver `liquidar_comercio`."""
+    if not 1 <= dias <= 30:
+        raise ValueError("los días a liquidar tienen que estar entre 1 y 30")
+    if inasistencias_injustificadas < 0 or inasistencias_injustificadas > dias:
+        raise ValueError(f"inasistencias_injustificadas tiene que estar entre 0 y {dias}")
+    if not 1 <= jornada_horas <= HORAS_JORNADA_COMPLETA:
+        raise ValueError("jornada_horas tiene que estar entre 1 y 8")
+    if asignacion_extraordinaria < 0:
+        raise ValueError("asignacion_extraordinaria no puede ser negativa")
+    fin = ultimo_dia(periodo)
+    if fecha_ingreso > fin:
+        raise ValueError("el empleado ingresó después del período liquidado")
+
+    factor = Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA
+    parcial = factor != 1
+    proporcion = Decimal(dias) / DIAS_MES
+    anios = anios_cumplidos(fecha_ingreso, fin)
+    liq = Liquidacion(
+        periodo=periodo, categoria=categoria, basico_escala=basico,
+        no_remunerativo_escala=no_remunerativo, vigencia_escala=vigencia_escala,
+        jornada_horas=jornada_horas, anios_antiguedad=anios,
+        dias_trabajados=dias - inasistencias_injustificadas,
+    )
+    jornada_txt = f"{jornada_horas} hs/día" if parcial else "jornada completa"
+    if dias < 30:
+        jornada_txt += f" · {dias}/30 días"
+
+    _bloque(liq, tipo="remunerativo", sufijo="", monto=redondear(basico * factor * proporcion),
+            desc_monto="Sueldo básico" if dias == 30 else "Sueldo proporcional",
+            detalle_monto=f"{categoria} · {jornada_txt}",
+            anios=anios, inasistencias=inasistencias_injustificadas)
+    _bloque(liq, tipo="no_remunerativo", sufijo=" no rem.",
+            monto=redondear(no_remunerativo * factor * proporcion),
+            desc_monto="Acuerdo no remunerativo", detalle_monto=f"Escala vigente · {jornada_txt}",
+            anios=anios, inasistencias=inasistencias_injustificadas)
+    extra = redondear(asignacion_extraordinaria * factor)
+    if extra:
+        liq.conceptos.append(Concepto(
+            "EXTR", "Asignación extraordinaria",
+            f"Única vez · {jornada_txt.split(' · ')[0]}", "no_remunerativo", extra))
+    return liq
+
+
 def liquidar_comercio(
     *,
     periodo: str,
@@ -174,41 +251,18 @@ def liquidar_comercio(
     asignacion_extraordinaria: Decimal = Decimal("0"),
     inasistencias_injustificadas: int = 0,
     tope_base_imponible: Decimal | None = None,
+    dias: int = 30,
 ) -> Liquidacion:
-    """`basico`, `no_remunerativo` y `asignacion_extraordinaria` son montos de jornada completa."""
-    if inasistencias_injustificadas < 0 or inasistencias_injustificadas > 30:
-        raise ValueError("inasistencias_injustificadas tiene que estar entre 0 y 30")
-    if not 1 <= jornada_horas <= HORAS_JORNADA_COMPLETA:
-        raise ValueError("jornada_horas tiene que estar entre 1 y 8")
-    if asignacion_extraordinaria < 0:
-        raise ValueError("asignacion_extraordinaria no puede ser negativa")
-    fin = ultimo_dia(periodo)
-    if fecha_ingreso > fin:
-        raise ValueError("el empleado ingresó después del período liquidado")
+    """`basico`, `no_remunerativo` y `asignacion_extraordinaria` son montos de jornada completa.
 
-    factor = Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA
-    parcial = factor != 1
-    anios = anios_cumplidos(fecha_ingreso, fin)
-    liq = Liquidacion(
-        periodo=periodo, categoria=categoria, basico_escala=basico,
-        no_remunerativo_escala=no_remunerativo, vigencia_escala=vigencia_escala,
-        jornada_horas=jornada_horas, anios_antiguedad=anios,
-        dias_trabajados=30 - inasistencias_injustificadas,
-    )
-    jornada_txt = f"{jornada_horas} hs/día" if parcial else "jornada completa"
-
-    _bloque(liq, tipo="remunerativo", sufijo="", monto=redondear(basico * factor),
-            desc_monto="Sueldo básico", detalle_monto=f"{categoria} · {jornada_txt}",
-            anios=anios, inasistencias=inasistencias_injustificadas)
-    _bloque(liq, tipo="no_remunerativo", sufijo=" no rem.", monto=redondear(no_remunerativo * factor),
-            desc_monto="Acuerdo no remunerativo", detalle_monto=f"Escala vigente · {jornada_txt}",
-            anios=anios, inasistencias=inasistencias_injustificadas)
-    extra = redondear(asignacion_extraordinaria * factor)
-    if extra:
-        liq.conceptos.append(Concepto(
-            "EXTR", "Asignación extraordinaria", f"Única vez · {jornada_txt}", "no_remunerativo", extra))
-
-    _aportes_y_neto(liq, factor, tope_base_imponible)
+    `dias` (sobre 30) es para el mes de ingreso o de egreso; ver `dias_del_mes`.
+    """
+    liq = _haberes_comercio(
+        periodo=periodo, categoria=categoria, basico=basico, vigencia_escala=vigencia_escala,
+        fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas,
+        asignacion_extraordinaria=asignacion_extraordinaria,
+        inasistencias_injustificadas=inasistencias_injustificadas, dias=dias)
+    _aportes_y_neto(liq, Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA, tope_base_imponible)
     return liq
 
 
@@ -217,6 +271,8 @@ def _aportes_y_neto(liq: Liquidacion, factor: Decimal, tope_base_imponible: Deci
     parcial = factor != 1
     total_rem = sum((c.importe for c in liq.remunerativos()), Decimal("0"))
     total_nr = sum((c.importe for c in liq.no_remunerativos()), Decimal("0"))
+    # Indemnizaciones y vacaciones no gozadas: sin aportes (art. 7 Ley 24.241).
+    total_ind = sum((c.importe for c in liq.indemnizatorios()), Decimal("0"))
 
     for codigo, desc, pct in APORTES_REMUNERATIVOS:
         base, detalle = total_rem, f"{_pct(pct)} s/ $ {pesos(total_rem)}"
@@ -242,6 +298,7 @@ def _aportes_y_neto(liq: Liquidacion, factor: Decimal, tope_base_imponible: Deci
                 "descuento", redondear(compl * pct)))
 
     total_desc = sum((c.importe for c in liq.descuentos()), Decimal("0"))
+    total_nr += total_ind
     neto = total_rem + total_nr - total_desc
     redondeo = neto.to_integral_value(rounding=ROUND_CEILING) - neto
     if redondeo:
@@ -263,6 +320,32 @@ def semestre_de(periodo: str) -> tuple[date, date]:
     if mes <= 6:
         return date(anio, 1, 1), date(anio, 6, 30)
     return date(anio, 7, 1), date(anio, 12, 31)
+
+
+def _nr_habitual(liq: Liquidacion) -> Decimal:
+    return sum((c.importe for c in liq.no_remunerativos() if c.codigo not in NO_HABITUALES), Decimal("0"))
+
+
+def _agregar_sac(liq: Liquidacion, meses: list, inicio: date, fin: date, desde: date, hasta: date,
+                 sufijo: str = "") -> int:
+    """Agrega SAC y SAC s/ no remunerativo del semestre. Devuelve los días computados."""
+    mejor_rem = max(meses, key=lambda l: l.total_remunerativo)
+    mejor_nr = max(meses, key=_nr_habitual)
+    dias = (hasta - desde).days + 1
+    dias_semestre = (fin - inicio).days + 1
+    proporcion = Decimal(dias) / Decimal(dias_semestre)
+    prop_txt = "semestre completo" if dias == dias_semestre else f"{dias}/{dias_semestre} días"
+    liq.conceptos.append(Concepto(
+        "SAC", f"Sueldo anual complementario{sufijo}",
+        f"50% de $ {pesos(mejor_rem.total_remunerativo)} ({mejor_rem.periodo}) · {prop_txt}",
+        "remunerativo", redondear(mejor_rem.total_remunerativo / 2 * proporcion)))
+    sac_nr = redondear(_nr_habitual(mejor_nr) / 2 * proporcion)
+    if sac_nr:
+        liq.conceptos.append(Concepto(
+            "SACNR", f"SAC{sufijo} s/ no remunerativo",
+            f"50% de $ {pesos(_nr_habitual(mejor_nr))} ({mejor_nr.periodo}) · {prop_txt}",
+            "no_remunerativo", sac_nr))
+    return dias
 
 
 def liquidar_sac(
@@ -293,33 +376,191 @@ def liquidar_sac(
     if hasta < desde:
         raise ValueError("el empleado no trabajó en el semestre")
 
-    def nr_habitual(l):
-        return sum((c.importe for c in l.no_remunerativos() if c.codigo not in NO_HABITUALES), Decimal("0"))
-
     mejor_rem = max(meses, key=lambda l: l.total_remunerativo)
-    mejor_nr = max(meses, key=nr_habitual)
-    dias = (hasta - desde).days + 1
-    dias_semestre = (fin - inicio).days + 1
-    proporcion = Decimal(dias) / Decimal(dias_semestre)
-    prop_txt = "semestre completo" if dias == dias_semestre else f"{dias}/{dias_semestre} días"
-
-    factor = Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA
     liq = Liquidacion(
         periodo=periodo, categoria=categoria, basico_escala=mejor_rem.total_remunerativo,
-        no_remunerativo_escala=nr_habitual(mejor_nr), vigencia_escala=inicio,
+        no_remunerativo_escala=max(_nr_habitual(l) for l in meses), vigencia_escala=inicio,
         jornada_horas=jornada_horas, anios_antiguedad=anios_cumplidos(fecha_ingreso, hasta),
-        dias_trabajados=dias, tipo="sac",
+        dias_trabajados=0, tipo="sac",
     )
-    sac = redondear(mejor_rem.total_remunerativo / 2 * proporcion)
-    liq.conceptos.append(Concepto(
-        "SAC", "Sueldo anual complementario",
-        f"50% de $ {pesos(mejor_rem.total_remunerativo)} ({mejor_rem.periodo}) · {prop_txt}",
-        "remunerativo", sac))
-    sac_nr = redondear(nr_habitual(mejor_nr) / 2 * proporcion)
-    if sac_nr:
-        liq.conceptos.append(Concepto(
-            "SACNR", "SAC s/ no remunerativo",
-            f"50% de $ {pesos(nr_habitual(mejor_nr))} ({mejor_nr.periodo}) · {prop_txt}",
-            "no_remunerativo", sac_nr))
+    liq.dias_trabajados = _agregar_sac(liq, meses, inicio, fin, desde, hasta)
+    _aportes_y_neto(liq, Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA, tope_base_imponible)
+    return liq
+
+
+# --- Liquidación final ---------------------------------------------------------
+CAUSAS_EGRESO = {
+    "renuncia": "Renuncia (art. 240 LCT)",
+    "despido_sin_causa": "Despido sin causa (art. 245 LCT)",
+    "despido_con_causa": "Despido con causa (art. 242 LCT)",
+    "mutuo_acuerdo": "Mutuo acuerdo (art. 241 LCT)",
+    "fallecimiento": "Fallecimiento del trabajador (art. 248 LCT)",
+}
+# Ley 27.742 (B.O. 08/07/2024) llevó el período de prueba de 3 a 6 meses.
+INICIO_PRUEBA_6_MESES = date(2024, 7, 9)
+
+
+def _sumar_meses(d: date, meses: int) -> date:
+    total = d.month - 1 + meses
+    anio, mes = d.year + total // 12, total % 12 + 1
+    return date(anio, mes, min(d.day, monthrange(anio, mes)[1]))
+
+
+def dias_vacaciones_anuales(fecha_ingreso: date, anio: int) -> int:
+    """Art. 150 LCT: según la antigüedad al 31/12 del año."""
+    anios = anios_cumplidos(fecha_ingreso, date(anio, 12, 31))
+    if anios < 5:
+        return 14
+    if anios < 10:
+        return 21
+    if anios < 20:
+        return 28
+    return 35
+
+
+def anios_indemnizacion(fecha_ingreso: date, fecha_egreso: date) -> int:
+    """Art. 245 LCT: un mes por año de servicio o fracción mayor de tres meses."""
+    anios = anios_cumplidos(fecha_ingreso, fecha_egreso)
+    aniversario = _sumar_meses(fecha_ingreso, 12 * anios)
+    if fecha_egreso > _sumar_meses(aniversario, 3):
+        anios += 1
+    return anios
+
+
+def en_periodo_de_prueba(fecha_ingreso: date, fecha_egreso: date) -> bool:
+    meses = 6 if fecha_ingreso >= INICIO_PRUEBA_6_MESES else 3
+    return fecha_egreso < _sumar_meses(fecha_ingreso, meses)
+
+
+def liquidar_final(
+    *,
+    categoria: str,
+    basico: Decimal,
+    vigencia_escala: date,
+    fecha_ingreso: date,
+    fecha_egreso: date,
+    causa: str,
+    historial: list,
+    no_remunerativo: Decimal = Decimal("0"),
+    jornada_horas: int = HORAS_JORNADA_COMPLETA,
+    asignacion_extraordinaria: Decimal = Decimal("0"),
+    inasistencias_injustificadas: int = 0,
+    preaviso_otorgado: bool = False,
+    vacaciones_gozadas: Decimal = Decimal("0"),
+    tope_indemnizatorio: Decimal | None = None,
+    tope_base_imponible: Decimal | None = None,
+) -> Liquidacion:
+    """Liquidación final del mes del egreso.
+
+    Incluye: días trabajados del mes, SAC proporcional del semestre, vacaciones
+    no gozadas proporcionales con su SAC (art. 156 LCT) y, según la causa,
+    indemnización por antigüedad (art. 245, o 50% por fallecimiento, art. 248),
+    preaviso (art. 231/232) e integración del mes de despido (art. 233), cada uno
+    con su SAC salvo la indemnización. Las indemnizaciones y vacaciones no gozadas
+    no llevan aportes. `historial` son las liquidaciones mensuales anteriores.
+    """
+    if causa not in CAUSAS_EGRESO:
+        raise ValueError(f"causa de egreso desconocida: {causa}")
+    if fecha_egreso < fecha_ingreso:
+        raise ValueError("la fecha de egreso es anterior a la de ingreso")
+    periodo = fecha_egreso.strftime("%Y-%m")
+    factor = Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA
+    dias = dias_del_mes(periodo, fecha_ingreso, fecha_egreso)
+
+    # 1) Días trabajados del mes.
+    liq = _haberes_comercio(
+        periodo=periodo, categoria=categoria, basico=basico, vigencia_escala=vigencia_escala,
+        fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas,
+        asignacion_extraordinaria=asignacion_extraordinaria,
+        inasistencias_injustificadas=inasistencias_injustificadas, dias=dias)
+    liq.tipo = "final"
+    liq.anios_antiguedad = anios_cumplidos(fecha_ingreso, fecha_egreso)
+    liq.egreso = {"fecha": fecha_egreso.isoformat(), "causa": causa,
+                  "preaviso_otorgado": preaviso_otorgado}
+
+    # Remuneración mensual normal y habitual de un mes completo (base de vacaciones,
+    # preaviso e integración): la de este mes como si se hubiera trabajado entero.
+    mes_completo = _haberes_comercio(
+        periodo=periodo, categoria=categoria, basico=basico, vigencia_escala=vigencia_escala,
+        fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas)
+    rem_mes = sum((c.importe for c in mes_completo.remunerativos()), Decimal("0"))
+    nr_mes = _nr_habitual(mes_completo)
+    mes_completo.total_remunerativo = rem_mes
+
+    # 2) SAC proporcional: mejor mes del semestre (incluido el mes del egreso).
+    inicio, fin = semestre_de(periodo)
+    liq.total_remunerativo = sum((c.importe for c in liq.remunerativos()), Decimal("0"))
+    meses = [l for l in historial if l.tipo == "mensual" and inicio <= primer_dia(l.periodo) <= fin
+             and l.periodo != periodo] + [liq]
+    _agregar_sac(liq, meses, inicio, fin, max(inicio, fecha_ingreso), fecha_egreso, " proporcional")
+
+    # 3) Vacaciones no gozadas proporcionales (arts. 150, 155 y 156 LCT): valor día = mes / 25.
+    anio = fecha_egreso.year
+    dias_anio = (date(anio, 12, 31) - date(anio, 1, 1)).days + 1
+    trabajados = (fecha_egreso - max(fecha_ingreso, date(anio, 1, 1))).days + 1
+    corresponden = dias_vacaciones_anuales(fecha_ingreso, anio)
+    dias_vac = redondear(Decimal(corresponden) * trabajados / dias_anio) - vacaciones_gozadas
+    if dias_vac > 0:
+        detalle = (f"{pesos(dias_vac)} días ({corresponden} × {trabajados}/{dias_anio}"
+                   f"{f' − {pesos(vacaciones_gozadas)} gozados' if vacaciones_gozadas else ''})"
+                   f" × $ {{}} / 25")
+        vac = redondear(rem_mes / 25 * dias_vac)
+        liq.conceptos.append(Concepto("VAC", "Vacaciones no gozadas", detalle.format(pesos(rem_mes)),
+                                      "indemnizacion", vac))
+        vac_nr = redondear(nr_mes / 25 * dias_vac)
+        if vac_nr:
+            liq.conceptos.append(Concepto("VACNR", "Vacaciones no gozadas s/ no remunerativo",
+                                          detalle.format(pesos(nr_mes)), "indemnizacion", vac_nr))
+        liq.conceptos.append(Concepto("SACVAC", "SAC s/ vacaciones no gozadas",
+                                      f"$ {pesos(vac + vac_nr)} / 12", "indemnizacion",
+                                      redondear((vac + vac_nr) / 12)))
+
+    # 4) Indemnizaciones por despido.
+    base_mes = rem_mes + nr_mes
+    if causa in ("despido_sin_causa", "fallecimiento"):
+        prueba = en_periodo_de_prueba(fecha_ingreso, fecha_egreso)
+        if not prueba:
+            # Mejor remuneración mensual normal y habitual del último año (sin SAC).
+            desde = _sumar_meses(primer_dia(periodo), -12)
+            candidatos = [l.total_remunerativo + _nr_habitual(l) for l in historial
+                          if l.tipo == "mensual" and l.dias_trabajados >= 30
+                          and desde <= primer_dia(l.periodo) < primer_dia(periodo)]
+            base = max(candidatos + [base_mes])
+            base_txt = f"$ {pesos(base)}"
+            if tope_indemnizatorio is not None and base > tope_indemnizatorio:
+                # Tope del art. 245 con el piso del 67% de la remuneración (fallo Vizzoti).
+                topeada = max(tope_indemnizatorio, redondear(base * Decimal("0.67")))
+                base_txt = f"$ {pesos(topeada)} (tope s/ $ {pesos(base)})"
+                base = topeada
+            anios = max(1, anios_indemnizacion(fecha_ingreso, fecha_egreso))
+            indem = redondear(base * anios)
+            detalle = f"{anios} {'año' if anios == 1 else 'años'} × {base_txt}"
+            if causa == "fallecimiento":
+                indem = redondear(indem / 2)
+                detalle = f"50% de {detalle}"
+            liq.conceptos.append(Concepto("IND", "Indemnización por antigüedad", detalle,
+                                          "indemnizacion", indem))
+        if causa == "despido_sin_causa" and not preaviso_otorgado:
+            if prueba:
+                meses_preaviso, txt = Decimal("0.5"), "15 días (período de prueba)"
+            elif anios_cumplidos(fecha_ingreso, fecha_egreso) < 5:
+                meses_preaviso, txt = Decimal("1"), "1 mes"
+            else:
+                meses_preaviso, txt = Decimal("2"), "2 meses"
+            preaviso = redondear(base_mes * meses_preaviso)
+            liq.conceptos.append(Concepto("PREAV", "Indemnización sustitutiva de preaviso",
+                                          f"{txt} × $ {pesos(base_mes)}", "indemnizacion", preaviso))
+            liq.conceptos.append(Concepto("SACPREAV", "SAC s/ preaviso", f"$ {pesos(preaviso)} / 12",
+                                          "indemnizacion", redondear(preaviso / 12)))
+            faltan = 30 - dias
+            if faltan > 0:
+                integ = redondear(base_mes / DIAS_MES * faltan)
+                liq.conceptos.append(Concepto("INTEG", "Integración mes de despido",
+                                              f"{faltan} días × $ {pesos(base_mes)} / 30",
+                                              "indemnizacion", integ))
+                liq.conceptos.append(Concepto("SACINTEG", "SAC s/ integración mes de despido",
+                                              f"$ {pesos(integ)} / 12", "indemnizacion",
+                                              redondear(integ / 12)))
+
     _aportes_y_neto(liq, factor, tope_base_imponible)
     return liq

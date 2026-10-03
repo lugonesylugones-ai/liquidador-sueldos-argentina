@@ -9,8 +9,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
-from .calculo import (Liquidacion, liquidar_comercio, liquidar_sac, primer_dia, semestre_de,
-                      ultimo_dia)
+from .calculo import (CAUSAS_EGRESO, Liquidacion, dias_del_mes, liquidar_comercio, liquidar_final,
+                      liquidar_sac, primer_dia, semestre_de, ultimo_dia)
 from .cuit import normalizar_cuit
 from .empleados import leer_empleados, validar_categoria
 from .escalas import CONVENIO_COMERCIO, basico_vigente, guardar_escala, leer_plantilla
@@ -264,6 +264,27 @@ def liquidar_mensual(conn, emp, periodo_: str, d: dict) -> Liquidacion:
     _exigir_motor(conn, emp)
     if emp["fecha_egreso"] and date.fromisoformat(emp["fecha_egreso"]) < primer_dia(periodo_):
         raise ErrorDatos(f"El empleado egresó antes de {periodo_}")
+    if _final_entre(conn, emp["id"], periodo_, periodo_):
+        raise ErrorDatos(f"Ya tiene la liquidación final de {periodo_}")
+    escala, extraordinaria = _escala_del_mes(conn, emp, periodo_, d)
+    ingreso = date.fromisoformat(emp["fecha_ingreso"])
+    egreso = date.fromisoformat(emp["fecha_egreso"]) if emp["fecha_egreso"] else None
+    dias = dias_del_mes(periodo_, ingreso, egreso)
+    if dias == 0:
+        raise ErrorDatos(f"No trabajó en {periodo_}")
+    try:
+        return liquidar_comercio(
+            periodo=periodo_, categoria=emp["categoria"], basico=escala.monto,
+            no_remunerativo=escala.no_remunerativo, vigencia_escala=escala.vigencia_desde,
+            fecha_ingreso=ingreso, jornada_horas=emp["jornada_horas"],
+            asignacion_extraordinaria=extraordinaria, dias=dias,
+            inasistencias_injustificadas=entero(d, "inasistencias_injustificadas", 0),
+            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+    except ValueError as exc:
+        raise ErrorDatos(str(exc))
+
+
+def _escala_del_mes(conn, emp, periodo_: str, d: dict):
     escala = basico_vigente(conn, emp["categoria"], primer_dia(periodo_), emp["convenio"])
     if escala is None:
         raise ErrorDatos(f"No hay escala cargada para {emp['categoria']} vigente en {periodo_}")
@@ -272,16 +293,21 @@ def liquidar_mensual(conn, emp, periodo_: str, d: dict) -> Liquidacion:
         # La de la escala es "única vez": solo si la vigencia es de este mismo mes.
         mismo_mes = escala.vigencia_desde.strftime("%Y-%m") == periodo_
         extraordinaria = escala.asignacion_unica if mismo_mes else Decimal("0")
-    try:
-        return liquidar_comercio(
-            periodo=periodo_, categoria=emp["categoria"], basico=escala.monto,
-            no_remunerativo=escala.no_remunerativo, vigencia_escala=escala.vigencia_desde,
-            fecha_ingreso=date.fromisoformat(emp["fecha_ingreso"]),
-            jornada_horas=emp["jornada_horas"], asignacion_extraordinaria=extraordinaria,
-            inasistencias_injustificadas=entero(d, "inasistencias_injustificadas", 0),
-            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
-    except ValueError as exc:
-        raise ErrorDatos(str(exc))
+    return escala, extraordinaria
+
+
+def _final_entre(conn, empleado_id: int, desde: str, hasta: str):
+    """Liquidación final del empleado con período entre `desde` y `hasta` (AAAA-MM), si hay."""
+    return conn.execute(
+        "SELECT periodo FROM liquidaciones WHERE empleado_id = ? AND tipo = 'final' AND periodo BETWEEN ? AND ?",
+        (empleado_id, desde, hasta)).fetchone()
+
+
+def _historial(conn, empleado_id: int) -> list:
+    rows = conn.execute(
+        "SELECT resultado FROM liquidaciones WHERE empleado_id = ? AND tipo = 'mensual'",
+        (empleado_id,)).fetchall()
+    return [Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"]) for r in rows]
 
 
 def liquidar_aguinaldo(conn, emp, periodo_: str, d: dict) -> Liquidacion:
@@ -289,10 +315,11 @@ def liquidar_aguinaldo(conn, emp, periodo_: str, d: dict) -> Liquidacion:
     egreso_en_mes = bool(emp["fecha_egreso"]) and emp["fecha_egreso"][:7] == periodo_
     if int(periodo_[5:]) not in (6, 12) and not egreso_en_mes:
         raise ErrorDatos("El SAC se liquida en junio, en diciembre o en el mes del egreso")
-    rows = conn.execute(
-        "SELECT resultado FROM liquidaciones WHERE empleado_id = ? AND tipo = 'mensual'",
-        (emp["id"],)).fetchall()
-    historial = [Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"]) for r in rows]
+    inicio, fin = semestre_de(periodo_)
+    final = _final_entre(conn, emp["id"], inicio.strftime("%Y-%m"), fin.strftime("%Y-%m"))
+    if final:
+        raise ErrorDatos(f"El SAC proporcional ya se pagó en la liquidación final de {final['periodo']}")
+    historial = _historial(conn, emp["id"])
     try:
         return liquidar_sac(
             periodo=periodo_, categoria=emp["categoria"],
@@ -305,6 +332,55 @@ def liquidar_aguinaldo(conn, emp, periodo_: str, d: dict) -> Liquidacion:
 
 
 FUNCIONES = {"mensual": liquidar_mensual, "sac": liquidar_aguinaldo}
+
+
+def liquidar_egreso(conn, empleado_id: int, d: dict) -> tuple[int, Liquidacion]:
+    """Liquidación final: guarda la fecha de egreso y reemplaza el sueldo y el SAC de ese mes."""
+    emp = conn.execute("SELECT * FROM empleados WHERE id = ?", (empleado_id,)).fetchone()
+    if emp is None:
+        raise ErrorDatos("El empleado no existe")
+    _exigir_motor(conn, emp)
+    causa = requerido(d, "causa")
+    if causa not in CAUSAS_EGRESO:
+        raise ErrorDatos(f"Causa de egreso desconocida: {causa}")
+    egreso = fecha(d, "fecha_egreso")
+    ingreso = date.fromisoformat(emp["fecha_ingreso"])
+    if egreso < ingreso:
+        raise ErrorDatos("La fecha de egreso es anterior a la de ingreso")
+    periodo_ = egreso.strftime("%Y-%m")
+    pago = datos_pago(d, empresa(conn, emp["empresa_id"]))
+    escala, extraordinaria = _escala_del_mes(conn, emp, periodo_, d)
+    try:
+        liq = liquidar_final(
+            categoria=emp["categoria"], basico=escala.monto, no_remunerativo=escala.no_remunerativo,
+            vigencia_escala=escala.vigencia_desde, fecha_ingreso=ingreso, fecha_egreso=egreso,
+            causa=causa, historial=_historial(conn, emp["id"]), jornada_horas=emp["jornada_horas"],
+            asignacion_extraordinaria=extraordinaria,
+            inasistencias_injustificadas=entero(d, "inasistencias_injustificadas", 0),
+            preaviso_otorgado=str(d.get("preaviso_otorgado", "")).lower() in ("1", "true", "si", "sí", "on"),
+            vacaciones_gozadas=decimal_opcional(d, "vacaciones_gozadas") or Decimal("0"),
+            tope_indemnizatorio=decimal_opcional(d, "tope_indemnizatorio"),
+            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+    except ValueError as exc:
+        raise ErrorDatos(str(exc))
+    conn.execute("UPDATE empleados SET fecha_egreso = ? WHERE id = ?", (egreso.isoformat(), emp["id"]))
+    # La final reemplaza al sueldo y al SAC del mes del egreso, y a una final anterior mal cargada.
+    conn.execute("""DELETE FROM liquidaciones WHERE empleado_id = ?
+                      AND ((periodo = ? AND tipo IN ('mensual', 'sac')) OR (tipo = 'final' AND periodo <> ?))""",
+                 (emp["id"], periodo_, periodo_))
+    liq_id = _guardar_liquidacion(conn, emp, liq, pago)
+    conn.commit()
+    return liq_id, liq
+
+
+def liquidacion(conn, liq_id: int):
+    """Una liquidación con los datos del empleado, para mostrarla en pantalla."""
+    r = conn.execute(
+        """SELECT l.*, e.apellido, e.nombre, e.empresa_id, e.legajo FROM liquidaciones l
+           JOIN empleados e ON e.id = l.empleado_id WHERE l.id = ?""", (liq_id,)).fetchone()
+    if r is None:
+        return None
+    return {**dict(r), "liq": Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"])}
 
 
 def datos_pago(d: dict, emp_empresa) -> dict:
@@ -351,9 +427,13 @@ def empleados_del_periodo(conn, empresa_id: int, tipo: str, periodo_: str) -> li
     """Los que trabajaron al menos un día en el mes (o en el semestre, para el SAC)."""
     desde, hasta = semestre_de(periodo_) if tipo == "sac" else (primer_dia(periodo_), ultimo_dia(periodo_))
     return conn.execute(
-        """SELECT * FROM empleados WHERE empresa_id = ? AND fecha_ingreso <= ?
-             AND (fecha_egreso IS NULL OR fecha_egreso >= ?) ORDER BY apellido, nombre""",
-        (empresa_id, hasta.isoformat(), desde.isoformat())).fetchall()
+        """SELECT * FROM empleados e WHERE empresa_id = ? AND fecha_ingreso <= ?
+             AND (fecha_egreso IS NULL OR fecha_egreso >= ?)
+             AND NOT EXISTS (SELECT 1 FROM liquidaciones f WHERE f.empleado_id = e.id
+                             AND f.tipo = 'final' AND f.periodo BETWEEN ? AND ?)
+           ORDER BY apellido, nombre""",
+        (empresa_id, hasta.isoformat(), desde.isoformat(), desde.strftime("%Y-%m"),
+         hasta.strftime("%Y-%m"))).fetchall()
 
 
 def liquidar_empresa(conn, empresa_id: int, tipo: str, d: dict,
