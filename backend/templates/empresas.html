@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block titulo %}Empresas{% endblock %}
+{% block contenido %}
+<h1>Empresas</h1>
+<p class="sub">Cada empresa tiene sus empleados y sus liquidaciones.</p>
+<section>
+  {% if empresas %}
+  <div class="tabla"><table>
+    <tr><th>Razón social</th><th>CUIT</th><th>Domicilio</th><th class="num">Empleados activos</th><th></th></tr>
+    {% for e in empresas %}
+    <tr><td><a href="{{ url_for('web.empresa', empresa_id=e.id) }}">{{ e.razon_social }}</a></td>
+        <td>{{ e.cuit }}</td><td>{{ e.domicilio }}</td><td class="num">{{ e.empleados_activos }}</td>
+        <td><a class="boton chico sec" href="{{ url_for('web.empresa', empresa_id=e.id) }}">Abrir</a></td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="muted">Todavía no hay empresas. Cargá la primera acá abajo.</p>
+  {% endif %}
+</section>
+
+<section id="nueva">
+  <h2>Nueva empresa</h2>
+  <form method="post" action="{{ url_for('web.crear_empresa') }}">
+    <div class="grilla">
+      <label>Razón social <input name="razon_social" required></label>
+      <label>CUIT <input name="cuit" required placeholder="30-12345678-9"></label>
+      <label>Domicilio <input name="domicilio" required></label>
+      <label>Lugar de pago (para los recibos) <input name="lugar_pago" placeholder="Ciudad"></label>
+    </div>
+    <div class="acciones"><button>Crear empresa</button></div>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block titulo %}Liquidación final{% endblock %}
+{% block contenido %}
+<div class="migas"><a href="{{ url_for('web.empresas') }}">Empresas</a> /
+  <a href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">{{ empresa.razon_social }}</a> / Liquidación final</div>
+<h1>Liquidación final · {{ emp.apellido }}, {{ emp.nombre }}</h1>
+<p class="sub">{{ emp.categoria }} · {{ emp.jornada_horas }} hs · ingreso {{ emp.fecha_ingreso }}</p>
+
+{% if previa %}
+<div class="aviso">Ya tiene una liquidación final ({{ previa.periodo }}).
+  <a href="{{ url_for('web.liquidacion', liq_id=previa.id) }}">Verla</a>. Si la volvés a hacer, se reemplaza.</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('web.final', empresa_id=empresa.id, empleado_id=emp.id) }}">
+  <div class="dos">
+    <section>
+      <h2>Egreso</h2>
+      <div class="grilla">
+        <label>Fecha de egreso <input type="date" name="fecha_egreso" required value="{{ datos.fecha_egreso }}"></label>
+        <label>Causa <select name="causa" id="causa">
+          {% for k, v in causas.items() %}<option value="{{ k }}"{% if k == datos.causa %} selected{% endif %}>{{ v }}</option>{% endfor %}
+        </select></label>
+        <label>Vacaciones ya tomadas este año (días) <input name="vacaciones_gozadas" inputmode="decimal" placeholder="0"></label>
+        <label>Faltas sin justificar del mes <input type="number" min="0" max="30" name="inasistencias_injustificadas" placeholder="0"></label>
+      </div>
+      <div id="despido" class="acciones">
+        <label class="check"><input type="checkbox" name="preaviso_otorgado" value="1"{% if datos.preaviso_otorgado %} checked{% endif %}> Se le dio el preaviso</label>
+      </div>
+      <p class="muted" style="margin-bottom:0">Incluye los días trabajados del mes, el aguinaldo proporcional y las vacaciones no gozadas.
+        En despido sin causa suma indemnización por antigüedad y, si no hubo preaviso, preaviso e integración del mes.
+        Reemplaza al sueldo y al aguinaldo de ese mes si ya estaban liquidados.</p>
+    </section>
+    <section>
+      <h2>Pago</h2>
+      <div class="grilla">
+        <label>Fecha de pago <input type="date" name="fecha_pago" required value="{{ datos.fecha_pago or '' }}"></label>
+        <label>Lugar de pago <input name="lugar_pago" required value="{{ datos.lugar_pago or '' }}"></label>
+        <label>Período último depósito <input name="ultimo_deposito_periodo" required placeholder="MM/AAAA" value="{{ datos.ultimo_deposito_periodo or '' }}"></label>
+        <label>Fecha último depósito <input type="date" name="ultimo_deposito_fecha" required value="{{ datos.ultimo_deposito_fecha or '' }}"></label>
+        <label>Banco <input name="ultimo_deposito_banco" required value="{{ datos.ultimo_deposito_banco or '' }}"></label>
+      </div>
+      <details style="margin-top:12px"><summary>Topes</summary>
+        <div class="grilla" style="margin-top:10px">
+          <label>Tope indemnizatorio art. 245 <input name="tope_indemnizatorio" inputmode="decimal" placeholder="Sin tope"></label>
+          <label>Tope base imponible <input name="tope_base_imponible" inputmode="decimal" placeholder="Sin tope"></label>
+        </div>
+        <p class="muted">El tope del art. 245 lo publica el Ministerio de Trabajo para cada convenio. Si la remuneración lo supera, se usa el tope con el piso del 67% (fallo Vizzoti).</p>
+      </details>
+    </section>
+  </div>
+  <div class="acciones">
+    <button>Liquidar egreso</button>
+    <a class="boton sec" href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">Volver</a>
+  </div>
+</form>
+<script>
+  const causa = document.getElementById("causa"), despido = document.getElementById("despido");
+  const mostrar = () => despido.style.display = causa.value === "despido_sin_causa" ? "" : "none";
+  causa.addEventListener("change", mostrar); mostrar();
+</script>
+{% endblock %}
