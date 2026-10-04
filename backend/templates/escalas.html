@@ -13,7 +13,8 @@
   <h2>Cargar una escala nueva</h2>
   <p class="muted">Bajá la <a href="{{ url_for('api.descargar_plantilla', convenio=convenio) }}">plantilla de {{ convenio }}</a> y completala con los montos
     de jornada completa tal como vienen en la circular. Si una fila tiene errores no se carga nada.
-    La asignación de única vez se paga solo en el mes de su vigencia.</p>
+    La asignación de única vez se paga solo en el mes de su vigencia.
+    {% if cuadros %}En edificios cada fila es "cargo|categoría del edificio" (1 a 4), y al final van los adicionales de la planilla.{% endif %}</p>
   <form method="post" enctype="multipart/form-data" action="{{ url_for('web.importar_escala') }}">
     <input type="hidden" name="convenio" value="{{ convenio }}">
     <div class="acciones" style="margin-top:0">
@@ -27,6 +28,25 @@
 <section>
   <h2>Vigente desde {{ vigencia }}</h2>
   <p class="muted">Fuente: {{ filas[0].fuente }}</p>
+  {% if cuadros %}{% set cuadro = cuadros[vigencia] %}
+  <div class="tabla"><table>
+    <tr><th>Cargo</th>{% for c in cats_edificio %}<th class="num">{{ c }}ª cat.</th>{% endfor %}<th>Estado</th></tr>
+    {% for cargo, montos, verificada in cuadro.cargos %}
+    <tr><td>{{ cargo }}</td>{% for m in montos %}<td class="num">{{ m.monto|pesos if m else '' }}</td>{% endfor %}
+        <td>{% if verificada %}<span class="chip ok">Verificada</span>{% else %}<span class="chip">Sin verificar</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% if cuadro.adicionales %}
+  <h3 style="margin-top:1rem">Adicionales de la planilla</h3>
+  <div class="tabla"><table>
+    <tr><th>Concepto</th><th class="num">Monto</th><th>Estado</th></tr>
+    {% for f in cuadro.adicionales %}
+    <tr><td>{{ f.categoria }}</td><td class="num">{{ f.monto|pesos }}</td>
+        <td>{% if f.verificada %}<span class="chip ok">Verificada</span>{% else %}<span class="chip">Sin verificar</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+  {% else %}
   <div class="tabla"><table>
     <tr><th>Categoría</th><th class="num">Básico</th><th class="num">No remunerativo</th>
         <th class="num">Asig. única vez</th><th>Estado</th></tr>
@@ -36,6 +56,7 @@
         <td>{% if f.verificada %}<span class="chip ok">Verificada</span>{% else %}<span class="chip">Sin verificar</span>{% endif %}</td></tr>
     {% endfor %}
   </table></div>
+  {% endif %}
 </section>
 {% else %}
 <section><p class="muted">No hay escalas cargadas para {{ convenio }}.</p></section>

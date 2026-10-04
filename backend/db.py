@@ -25,6 +25,14 @@ CREATE TABLE IF NOT EXISTS empresas (
     lugar_pago TEXT                   -- default para los recibos
 );
 
+-- Datos del edificio para los consorcios (CCT 589/10), 1 a 1 con la empresa.
+CREATE TABLE IF NOT EXISTS edificios (
+    empresa_id INTEGER PRIMARY KEY REFERENCES empresas(id),
+    categoria INTEGER NOT NULL CHECK (categoria BETWEEN 1 AND 4),   -- art. 6, por servicios centrales
+    unidades_funcionales INTEGER NOT NULL DEFAULT 0 CHECK (unidades_funcionales >= 0),
+    zona_desfavorable INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS escalas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     convenio TEXT NOT NULL REFERENCES convenios(codigo),
@@ -50,6 +58,7 @@ CREATE TABLE IF NOT EXISTS empleados (
     fecha_ingreso TEXT NOT NULL,      -- YYYY-MM-DD
     fecha_egreso TEXT,                -- NULL = activo
     jornada_horas INTEGER NOT NULL DEFAULT 8 CHECK (jornada_horas BETWEEN 1 AND 8),
+    extras TEXT,                      -- JSON con datos propios del convenio (afiliado, tareas...)
     UNIQUE (empresa_id, cuil),
     UNIQUE (empresa_id, legajo)
 );
@@ -78,7 +87,15 @@ def connect(path: str) -> sqlite3.Connection:
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     _migrar_tipo_final(conn)
+    _migrar_extras(conn)
     conn.commit()
+
+
+def _migrar_extras(conn: sqlite3.Connection) -> None:
+    """Bases creadas antes de SUTERYH: agrega empleados.extras."""
+    columnas = {r["name"] for r in conn.execute("PRAGMA table_info(empleados)")}
+    if "extras" not in columnas:
+        conn.execute("ALTER TABLE empleados ADD COLUMN extras TEXT")
 
 
 def _migrar_tipo_final(conn: sqlite3.Connection) -> None:

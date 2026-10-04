@@ -32,4 +32,17 @@
         <td class="num">{{ liq.total_no_remunerativo|pesos }}</td><td class="num">{{ liq.total_descuentos|pesos }}</td></tr>
   </table></div>
 </section>
+{% if liq.informativos %}
+<section>
+  <h2>Contribuciones del empleador del convenio</h2>
+  <p class="muted">No van en el recibo: se pagan con las boletas sindicales. Alícuotas sin verificar.</p>
+  <div class="tabla"><table>
+    <tr><th>Cód.</th><th>Concepto</th><th>Cómo se calculó</th><th class="num">Importe</th></tr>
+    {% for c in liq.informativos %}
+    <tr><td class="muted">{{ c.codigo }}</td><td>{{ c.descripcion }}</td><td class="muted">{{ c.detalle }}</td>
+        <td class="num">{{ c.importe|pesos }}</td></tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
 {% endblock %}

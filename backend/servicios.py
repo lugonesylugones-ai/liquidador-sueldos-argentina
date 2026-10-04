@@ -11,6 +11,8 @@ from io import BytesIO
 
 from .calculo import (CAUSAS_EGRESO, Liquidacion, dias_del_mes, liquidar_comercio, liquidar_final,
                       liquidar_sac, primer_dia, semestre_de, ultimo_dia)
+from .calculo_suteryh import (CARGO_POR_NOMBRE, CONVENIO_SUTERYH, TAREAS, ADICIONALES, fila_basico,
+                              liquidar_sac_suteryh, liquidar_suteryh, nombres_escala)
 from .cuit import normalizar_cuit
 from .empleados import leer_empleados, validar_categoria
 from .escalas import CONVENIO_COMERCIO, basico_vigente, guardar_escala, leer_plantilla
@@ -104,9 +106,72 @@ def empresa(conn, empresa_id: int):
 
 
 def empleados(conn, empresa_id: int) -> list:
-    return [dict(r) for r in conn.execute(
+    return [{**dict(r), "extras": extras(r)} for r in conn.execute(
         "SELECT * FROM empleados WHERE empresa_id = ? ORDER BY fecha_egreso IS NOT NULL, apellido, nombre",
         (empresa_id,))]
+
+
+# Datos propios de los encargados de edificio (CCT 589/10), con sus valores por defecto.
+EXTRAS_SUTERYH = {"afiliado": True, "retira_residuos": False, "tareas": [], "tramos_titulo": 0}
+
+
+def extras(emp) -> dict:
+    """Datos del empleado propios de su convenio (columna `extras`)."""
+    guardados = json.loads(emp["extras"]) if emp["extras"] else {}
+    return {**EXTRAS_SUTERYH, **guardados} if emp["convenio"] == CONVENIO_SUTERYH else guardados
+
+
+def edificio(conn, empresa_id: int) -> dict | None:
+    r = conn.execute("SELECT * FROM edificios WHERE empresa_id = ?", (empresa_id,)).fetchone()
+    return {**dict(r), "zona_desfavorable": bool(r["zona_desfavorable"])} if r else None
+
+
+def guardar_edificio(conn, empresa_id: int, d: dict) -> None:
+    """Categoría (1 a 4), unidades funcionales y zona desfavorable del consorcio."""
+    if empresa(conn, empresa_id) is None:
+        raise ErrorDatos("La empresa no existe")
+    categoria = entero(d, "categoria", 0)
+    if categoria not in (1, 2, 3, 4):
+        raise ErrorDatos("La categoría del edificio tiene que ser 1, 2, 3 o 4")
+    uf = entero(d, "unidades_funcionales", 0)
+    if uf < 0:
+        raise ErrorDatos("Las unidades funcionales no pueden ser negativas")
+    conn.execute(
+        """INSERT INTO edificios (empresa_id, categoria, unidades_funcionales, zona_desfavorable)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (empresa_id) DO UPDATE SET categoria = excluded.categoria,
+             unidades_funcionales = excluded.unidades_funcionales,
+             zona_desfavorable = excluded.zona_desfavorable""",
+        (empresa_id, categoria, uf, int(si_no(d, "zona_desfavorable", False))))
+    conn.commit()
+
+
+def si_no(d: dict, campo: str, default: bool) -> bool:
+    valor = d.get(campo)
+    if valor in (None, ""):
+        return default
+    if isinstance(valor, bool):
+        return valor
+    return str(valor).strip().lower() in ("1", "true", "si", "sí", "on")
+
+
+def _lista(d, campo: str) -> list:
+    if hasattr(d, "getlist"):  # formulario web
+        return [v for v in d.getlist(campo) if v]
+    valor = d.get(campo) or []
+    return [valor] if isinstance(valor, str) else list(valor)
+
+
+def _extras_suteryh(d: dict) -> dict:
+    tareas = _lista(d, "tareas")
+    desconocidas = [t for t in tareas if t not in TAREAS]
+    if desconocidas:
+        raise ErrorDatos(f"Tarea desconocida: {', '.join(desconocidas)}. Valen: {', '.join(TAREAS)}")
+    tramos = entero(d, "tramos_titulo", 0)
+    if not 0 <= tramos <= 3:
+        raise ErrorDatos("'tramos_titulo' va de 0 a 3")
+    return {"afiliado": si_no(d, "afiliado", True), "retira_residuos": si_no(d, "retira_residuos", False),
+            "tareas": list(dict.fromkeys(tareas)), "tramos_titulo": tramos}
 
 
 def escalas(conn, convenio: str = CONVENIO_COMERCIO) -> list:
@@ -187,17 +252,24 @@ def _upsert_empleado(conn, empresa_id: int, f: dict) -> int:
     """Alta o actualización por CUIL dentro de la empresa."""
     cur = conn.execute(
         """INSERT INTO empleados (empresa_id, legajo, apellido, nombre, cuil, convenio, categoria,
-                                  fecha_ingreso, jornada_horas, fecha_egreso)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  fecha_ingreso, jornada_horas, fecha_egreso, extras)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (empresa_id, cuil) DO UPDATE SET
              legajo = excluded.legajo, apellido = excluded.apellido, nombre = excluded.nombre,
              convenio = excluded.convenio, categoria = excluded.categoria,
              fecha_ingreso = excluded.fecha_ingreso, jornada_horas = excluded.jornada_horas,
-             fecha_egreso = excluded.fecha_egreso
+             fecha_egreso = excluded.fecha_egreso, extras = COALESCE(excluded.extras, empleados.extras)
            RETURNING id""",
         (empresa_id, f["legajo"], f["apellido"], f["nombre"], f["cuil"], f["convenio"], f["categoria"],
-         f["fecha_ingreso"], f["jornada_horas"], f["fecha_egreso"]))
+         f["fecha_ingreso"], _jornada(f), f["fecha_egreso"], f.get("extras")))
     return cur.fetchone()[0]
+
+
+def _jornada(f: dict) -> int:
+    """En edificios la media jornada es un cargo con su propia escala: la jornada sale del cargo."""
+    if f["convenio"] == CONVENIO_SUTERYH:
+        return 4 if CARGO_POR_NOMBRE[f["categoria"]][2] else 8
+    return f["jornada_horas"]
 
 
 def guardar_empleado(conn, empresa_id: int, d: dict) -> int:
@@ -220,7 +292,8 @@ def guardar_empleado(conn, empresa_id: int, d: dict) -> int:
             "apellido": requerido(d, "apellido").strip(), "nombre": requerido(d, "nombre").strip(),
             "cuil": cuit(d, "cuil"), "convenio": convenio, "categoria": categoria,
             "fecha_ingreso": ingreso.isoformat(), "jornada_horas": jornada,
-            "fecha_egreso": egreso.isoformat() if egreso else None})
+            "fecha_egreso": egreso.isoformat() if egreso else None,
+            "extras": json.dumps(_extras_suteryh(d)) if convenio == CONVENIO_SUTERYH else None})
     except sqlite3.IntegrityError as exc:
         raise ErrorDatos(f"No se pudo guardar el empleado: {exc}")
     conn.commit()
@@ -252,8 +325,15 @@ def categorias_de(conn, convenio: str) -> list:
     return cats[convenio]
 
 
-def importar_escala(conn, contenido: bytes, nombre_archivo: str, convenio: str = CONVENIO_COMERCIO) -> int:
+def filas_de_escala(conn, convenio: str) -> list:
+    """Filas que acepta la plantilla de escala: las categorías, o en edificios cargo × categoría
+    del edificio más los adicionales de la planilla."""
     cats = categorias_de(conn, convenio)
+    return nombres_escala() if convenio == CONVENIO_SUTERYH else cats
+
+
+def importar_escala(conn, contenido: bytes, nombre_archivo: str, convenio: str = CONVENIO_COMERCIO) -> int:
+    cats = filas_de_escala(conn, convenio)
     if not cats:
         raise ErrorDatos(f"El convenio {convenio} no tiene categorías: cargalas primero")
     res = leer_plantilla(contenido, None if convenio == CONVENIO_COMERCIO else cats)
@@ -285,12 +365,14 @@ def liquidar_mensual(conn, emp, periodo_: str, d: dict) -> Liquidacion:
         raise ErrorDatos(f"El empleado egresó antes de {periodo_}")
     if _final_entre(conn, emp["id"], periodo_, periodo_):
         raise ErrorDatos(f"Ya tiene la liquidación final de {periodo_}")
-    escala, extraordinaria = _escala_del_mes(conn, emp, periodo_, d)
     ingreso = date.fromisoformat(emp["fecha_ingreso"])
     egreso = date.fromisoformat(emp["fecha_egreso"]) if emp["fecha_egreso"] else None
     dias = dias_del_mes(periodo_, ingreso, egreso)
     if dias == 0:
         raise ErrorDatos(f"No trabajó en {periodo_}")
+    if emp["convenio"] == CONVENIO_SUTERYH:
+        return _mensual_suteryh(conn, emp, periodo_, d, ingreso, dias)
+    escala, extraordinaria = _escala_del_mes(conn, emp, periodo_, d)
     try:
         return liquidar_comercio(
             periodo=periodo_, categoria=emp["categoria"], basico=escala.monto,
@@ -298,6 +380,38 @@ def liquidar_mensual(conn, emp, periodo_: str, d: dict) -> Liquidacion:
             fecha_ingreso=ingreso, jornada_horas=emp["jornada_horas"],
             asignacion_extraordinaria=extraordinaria, dias=dias,
             inasistencias_injustificadas=entero(d, "inasistencias_injustificadas", 0),
+            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+    except ValueError as exc:
+        raise ErrorDatos(str(exc))
+
+
+def _mensual_suteryh(conn, emp, periodo_: str, d: dict, ingreso: date, dias: int) -> Liquidacion:
+    if entero(d, "inasistencias_injustificadas", 0):
+        raise ErrorDatos("Las faltas de encargados de edificio todavía no se descuentan: "
+                         "liquidalo sin faltas y ajustalo a mano")
+    ed = edificio(conn, emp["empresa_id"])
+    if ed is None:
+        raise ErrorDatos("Faltan los datos del edificio (categoría y unidades funcionales) en la empresa")
+    al = primer_dia(periodo_)
+    fila = basico_vigente(conn, fila_basico(emp["categoria"], ed["categoria"]), al, CONVENIO_SUTERYH)
+    if fila is None:
+        raise ErrorDatos(f"No hay escala cargada para {emp['categoria']} ({ed['categoria']}ª cat.) "
+                         f"vigente en {periodo_}")
+    adicionales = {}
+    for clave, nombre in ADICIONALES.items():
+        a = basico_vigente(conn, nombre, al, CONVENIO_SUTERYH)
+        if a is not None:
+            adicionales[clave] = a.monto
+    ex = extras(emp)
+    try:
+        return liquidar_suteryh(
+            periodo=periodo_, cargo=emp["categoria"], categoria_edificio=ed["categoria"], basico=fila.monto,
+            adicionales=adicionales, vigencia_escala=fila.vigencia_desde, fecha_ingreso=ingreso, dias=dias,
+            unidades_funcionales=ed["unidades_funcionales"] if ex["retira_residuos"] else 0,
+            tareas=ex["tareas"], tramos_titulo=ex["tramos_titulo"], zona_desfavorable=ed["zona_desfavorable"],
+            horas_50=decimal_opcional(d, "horas_50") or Decimal("0"),
+            horas_100=decimal_opcional(d, "horas_100") or Decimal("0"),
+            afiliado=ex["afiliado"], alicuota_sindical=decimal_opcional(d, "alicuota_sindical"),
             tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
     except ValueError as exc:
         raise ErrorDatos(str(exc))
@@ -338,14 +452,17 @@ def liquidar_aguinaldo(conn, emp, periodo_: str, d: dict) -> Liquidacion:
     final = _final_entre(conn, emp["id"], inicio.strftime("%Y-%m"), fin.strftime("%Y-%m"))
     if final:
         raise ErrorDatos(f"El SAC proporcional ya se pagó en la liquidación final de {final['periodo']}")
-    historial = _historial(conn, emp["id"])
+    datos = dict(
+        periodo=periodo_, categoria=emp["categoria"],
+        fecha_ingreso=date.fromisoformat(emp["fecha_ingreso"]),
+        fecha_egreso=date.fromisoformat(emp["fecha_egreso"]) if emp["fecha_egreso"] else None,
+        jornada_horas=emp["jornada_horas"], historial=_historial(conn, emp["id"]),
+        tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
     try:
-        return liquidar_sac(
-            periodo=periodo_, categoria=emp["categoria"],
-            fecha_ingreso=date.fromisoformat(emp["fecha_ingreso"]),
-            fecha_egreso=date.fromisoformat(emp["fecha_egreso"]) if emp["fecha_egreso"] else None,
-            jornada_horas=emp["jornada_horas"], historial=historial,
-            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+        if emp["convenio"] == CONVENIO_SUTERYH:
+            return liquidar_sac_suteryh(**datos, afiliado=extras(emp)["afiliado"],
+                                        alicuota_sindical=decimal_opcional(d, "alicuota_sindical"))
+        return liquidar_sac(**datos)
     except ValueError as exc:
         raise ErrorDatos(str(exc))
 
@@ -359,6 +476,9 @@ def liquidar_egreso(conn, empleado_id: int, d: dict) -> tuple[int, Liquidacion]:
     if emp is None:
         raise ErrorDatos("El empleado no existe")
     _exigir_motor(conn, emp)
+    if emp["convenio"] == CONVENIO_SUTERYH:
+        raise ErrorDatos("La liquidación final de encargados de edificio todavía no está programada "
+                         "(el CCT 589/10 cuenta las vacaciones en días hábiles)")
     causa = requerido(d, "causa")
     if causa not in CAUSAS_EGRESO:
         raise ErrorDatos(f"Causa de egreso desconocida: {causa}")

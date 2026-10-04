@@ -2,7 +2,8 @@
 Programa para liquidar sueldos de empleados de comercio, gastronomía y encargados de edificios (FATERYH) en Argentina.
 
 **Estado:** maneja varias empresas, cada una con sus empleados y cada empleado con su convenio.
-El único convenio con motor de cálculo es Comercio (CCT 130/75): sueldo mensual y aguinaldo.
+Liquida Comercio (CCT 130/75: sueldo, aguinaldo y liquidación final) y encargados de edificio
+(CCT 589/10: sueldo y aguinaldo, **sin validar todavía contra un recibo real**).
 
 ## Cómo correrlo
 
@@ -37,8 +38,12 @@ Con el servidor andando, entrá a http://127.0.0.1:5000:
 5. **Liquidación final**: desde el empleado, botón "Liq. final". Cargás fecha de egreso, causa
    y si hubo preaviso; reemplaza al sueldo y al aguinaldo de ese mes.
 6. **Escalas**: muestra las de cada convenio (con "Sin verificar" / "Verificada") y sube nuevas.
-7. **Sindicatos**: alta de convenios con sus categorías. Los que no son Comercio se pueden
-   asignar y cargar escalas, pero no se liquidan hasta programar sus reglas.
+7. **Sindicatos**: alta de convenios con sus categorías. Los que no tienen motor de cálculo se
+   pueden asignar y cargar escalas, pero no se liquidan hasta programar sus reglas.
+8. **Consorcios (encargados de edificio)**: cada consorcio es una empresa. Al cargar un empleado
+   con el convenio CCT 589/10 aparece la sección "Edificio" (categoría 1 a 4, unidades funcionales,
+   zona desfavorable) y en el empleado se marcan afiliación, retiro de residuos, tareas y título.
+   Al liquidar se cargan las horas extra de cada uno.
 
 Está pensado para usarlo en tu propia compu: no tiene usuarios ni contraseña, así que
 no lo publiques en internet tal como está.
@@ -118,12 +123,31 @@ El recibo incluye los datos que exige el art. 140 LCT (empleador, trabajador, ca
 fecha de ingreso, determinación de cada concepto, último depósito de aportes, totales,
 neto en números y letras, lugar y fecha de pago y constancia de recepción del duplicado).
 
+## Qué calcula (encargados de edificio, CCT 589/10)
+
+Nada de esta sección está contrastado con un recibo real. Escalas jul-sep 2026 de las planillas
+de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcadas sin verificar.
+
+| Concepto | Regla |
+|---|---|
+| Básico | Escala del cargo según la categoría del edificio (art. 6) |
+| Adicional remuneratorio | El de la planilla; 50% en cargos de media jornada (a verificar) |
+| Antigüedad | Monto fijo por año: 2% del ayudante sin vivienda de 4ª; 1% en media jornada (art. 11) |
+| Vivienda | Remunerativa (art. 15); se descuenta igual importe porque es en especie (a verificar) |
+| Residuos, tareas, título, zona | Retiro por UF, plus por tarea fijos, título 5% por tramo (a verificar), zona 50% |
+| Horas extra | 50% y 100% sobre remuneración habitual / 200 (divisor a verificar) |
+| Aportes | Jubilación 11%, PAMI 3%, obra social 3%, Caja Protección Familia 1%, FMVDD 1%, seguro art. 27 bis 0,75%, cuota sindical 2% solo afiliados (alícuota local a verificar) |
+| Contribuciones del convenio | Se muestran aparte (no van en el recibo): CPF 1,5%, FMVDD 4%, seguro 0,75%, SERACARH 0,5% |
+| SAC | Régimen general con los aportes del convenio, sin descontar vivienda |
+| Sin hacer | Liquidación final (vacaciones en días hábiles), faltas, suplentes y jornalizados |
+
 ## Pendiente
 
 - Horas extra, vacaciones, licencias y feriados (Día del Empleado de Comercio).
 - Contribuciones patronales y costo empleador.
 - Liquidación final: validar contra un recibo real (hoy sigue la LCT, no se contrastó con un caso real).
-- Motor de cálculo para otros convenios (SUTERYH, gastronómicos, etc.).
+- Encargados de edificio: validar contra un recibo real y su F.931; liquidación final.
+- Motor de cálculo para otros convenios (gastronómicos, etc.).
 - Retención de ganancias.
 - Lectura de escalas directamente desde el PDF de FAECYS.
 - Gastronomía y FATERYH.
