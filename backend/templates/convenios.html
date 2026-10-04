@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block titulo %}Sindicatos{% endblock %}
+{% block contenido %}
+<h1>Sindicatos y convenios</h1>
+<p class="sub">Cada empleado se liquida con su convenio.</p>
+<div class="aviso">Podés dar de alta cualquier convenio con sus categorías y escalas, y asignárselo a los empleados.
+  Pero para liquidarlo hace falta programar sus reglas (adicionales, antigüedad, aportes sindicales) y validarlas con recibos reales.
+  Hoy el único con cálculo es Comercio.</div>
+
+{% for c in convenios %}
+<section>
+  <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+    <h2 style="margin:0">{{ c.codigo }} · {{ c.nombre }}</h2>
+    {% if c.tiene_motor %}<span class="chip ok">Se liquida</span>{% else %}<span class="chip">Sin cálculo todavía</span>{% endif %}
+  </div>
+  <p class="muted">{{ c.categorias|length }} categorías: {{ c.categorias|join(', ') or 'ninguna' }}</p>
+  <div class="acciones" style="margin-top:0">
+    <a class="boton chico sec" href="{{ url_for('web.escalas', convenio=c.codigo) }}">Escalas</a>
+  </div>
+  <details style="margin-top:12px"><summary>Agregar categorías</summary>
+    <form method="post" action="{{ url_for('web.agregar_categorias') }}" style="margin-top:10px">
+      <input type="hidden" name="codigo" value="{{ c.codigo }}">
+      <label>Una por línea <textarea name="categorias" rows="3" required></textarea></label>
+      <div class="acciones"><button>Agregar</button></div>
+    </form>
+  </details>
+</section>
+{% endfor %}
+
+<section>
+  <h2>Nuevo convenio</h2>
+  <form method="post" action="{{ url_for('web.crear_convenio') }}">
+    <div class="grilla">
+      <label>Código <input name="codigo" required placeholder="CCT 589/10"></label>
+      <label>Nombre <input name="nombre" required placeholder="Encargados de edificio (SUTERYH)"></label>
+    </div>
+    <label style="margin-top:12px">Categorías, una por línea <textarea name="categorias" rows="5" placeholder="Encargado permanente&#10;Ayudante&#10;Suplente"></textarea></label>
+    <div class="acciones"><button>Crear convenio</button></div>
+  </form>
+</section>
+{% endblock %}

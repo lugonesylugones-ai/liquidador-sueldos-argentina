@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block titulo %}Tablero{% endblock %}
+{% block contenido %}
+<h1>Tablero</h1>
+<p class="sub">Resumen de todas las empresas.</p>
+<div class="tiles">
+  <div class="tile g1"><div class="valor">{{ resumen.empresas }}</div><div class="rotulo">Empresas</div></div>
+  <div class="tile g2"><div class="valor">{{ resumen.activos }}</div><div class="rotulo">Empleados activos</div></div>
+  <div class="tile g3"><div class="valor">{{ resumen.ultimo_periodo or '—' }}</div><div class="rotulo">Último mes liquidado ({{ resumen.recibos_ultimo }} recibos)</div></div>
+  <div class="tile g4"><div class="valor">$ {{ resumen.neto_ultimo|pesos }}</div><div class="rotulo">Neto pagado ese mes</div></div>
+</div>
+
+<div class="dos">
+  <section>
+    <h2>Empresas</h2>
+    {% if empresas %}
+    {% set maximo = empresas|map(attribute='empleados_activos')|max or 1 %}
+    {% set colores = ['--g1', '--g2', '--g3', '--g4'] %}
+    {% for e in empresas %}
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <a href="{{ url_for('web.empresa', empresa_id=e.id) }}">{{ e.razon_social }}</a>
+          <span class="muted">{{ e.empleados_activos }} activos</span>
+        </div>
+        <div class="barra"><span style="width:{{ (100 * e.empleados_activos / maximo)|round|int }}%;background:var({{ colores[loop.index0 % 4] }})"></span></div>
+      </div>
+    {% endfor %}
+    {% else %}
+    <p class="muted">Todavía no hay empresas.</p>
+    {% endif %}
+    <div class="acciones"><a class="boton" href="{{ url_for('web.empresas') }}">Ver empresas</a></div>
+  </section>
+  <section>
+    <h2>Accesos rápidos</h2>
+    <p class="muted">Para liquidar el mes, el aguinaldo o una liquidación final, entrá a la empresa.</p>
+    <div class="acciones">
+      <a class="boton sec" href="{{ url_for('web.escalas') }}">Escalas</a>
+      <a class="boton sec" href="{{ url_for('web.convenios') }}">Sindicatos</a>
+      <a class="boton sec" href="{{ url_for('web.empresas') }}#nueva">Nueva empresa</a>
+    </div>
+    {% if escalas %}
+    <p class="muted" style="margin-top:16px">Escala de Comercio más nueva: vigente desde {{ escalas[0].vigencia_desde }}.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
