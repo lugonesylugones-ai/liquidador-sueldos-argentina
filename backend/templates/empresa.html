@@ -115,6 +115,9 @@
         <label>Título encargado integral <select name="tramos_titulo">
           {% for t in range(4) %}<option value="{{ t }}"{% if (ex.tramos_titulo or 0) == t %} selected{% endif %}>{{ 'No' if t == 0 else t ~ ' tramo' ~ ('s' if t > 1 else '') ~ ' (' ~ t * 5 ~ '%)' }}</option>{% endfor %}
         </select></label>
+        <label>Antigüedad en jornada reducida <select name="antiguedad_completa">
+          <option value="0">1% por año (convenio)</option><option value="1"{% if ex.antiguedad_completa %} selected{% endif %}>2% por año (mejora pactada)</option>
+        </select></label>
       </div>
       <div class="tareas">
         {% for clave, nombre in tareas.items() %}

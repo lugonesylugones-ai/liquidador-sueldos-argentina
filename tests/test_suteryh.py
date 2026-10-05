@@ -110,6 +110,16 @@ def test_encargado_no_permanente_jornada_reducida():
     assert importes(zona)["ZONA"] == D("435038.18") and zona.neto == D("340418")
 
 
+def test_antiguedad_completa_en_jornada_reducida():
+    """Recibo real: no permanente con 13 años al que el consorcio le paga la antigüedad al 2%."""
+    caso = dict(unidades_funcionales=7, tareas=("limpieza_piletas", "viaticos"), tramos_titulo=2)
+    assert importes(liquidar("2026-09", "encargado_no_permanente_sv", 1, 13, **caso))["ANT"] == D("157366.95")
+    liq = liquidar("2026-09", "encargado_no_permanente_sv", 1, 13, antiguedad_completa=True, **caso)
+    i = importes(liq)
+    assert (i["ANT"], i["ADR"], i["TIT"]) == (D("314733.90"), D("42500.00"), D("76113.00"))
+    assert liq.total_remunerativo == D("1355479.80")
+
+
 def test_horas_extra_jornada_reducida_divisor_100():
     liq = liquidar("2026-09", "encargado_no_permanente_cv", 1, 0, horas_100=8)
     assert importes(liq)["HE100"] == D("114349.76")  # 714.686 / 100 × 2 × 8
@@ -229,7 +239,8 @@ def test_sueldo_de_encargado_desde_la_web(client):
     r = encargado(client, e)
     assert "guardado" in r.text and 'id="edificio"' in r.text
     emp = client.get(f"/api/empresas/{e}/empleados").json[0]
-    assert emp["extras"] == {"afiliado": True, "retira_residuos": True, "tareas": [], "tramos_titulo": 0}
+    assert emp["extras"] == {"afiliado": True, "retira_residuos": True, "tareas": [], "tramos_titulo": 0,
+                             "antiguedad_completa": False}
 
     # Sin los datos del edificio no se puede liquidar.
     r = client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": "2026-09"},
@@ -260,23 +271,25 @@ def test_datos_del_encargado_y_errores(client):
     e = consorcio(client, categoria="1", unidades_funcionales="10", zona_desfavorable="0")
     data = {"apellido": "Gómez", "nombre": "Juan", "cuil": "20-22222222-3", "convenio": SUTERYH,
             "categoria": "Ayudante Media jornada", "fecha_ingreso": "2020-01-01", "afiliado": "0",
-            "tramos_titulo": "1"}
+            "tramos_titulo": "1", "antiguedad_completa": "1"}
     r = client.post(f"/empresas/{e}/empleados", data={**data, "tareas": ["jardin", "viaticos"]},
                     follow_redirects=True)
     assert "guardado" in r.text
     emp = client.get(f"/api/empresas/{e}/empleados").json[0]
     assert emp["jornada_horas"] == 4
     assert emp["extras"] == {"afiliado": False, "retira_residuos": False, "tareas": ["jardin", "viaticos"],
-                             "tramos_titulo": 1}
+                             "tramos_titulo": 1, "antiguedad_completa": True}
     # El formulario de edición los muestra cargados.
     pagina = client.get(f"/empresas/{e}?editar={emp['id']}").text
-    assert 'value="jardin" checked' in pagina and 'value="limpieza_piletas">' in pagina
+    assert 'value="jardin" checked' in pagina and '<option value="1" selected>2% por año' in pagina and 'value="limpieza_piletas">' in pagina
 
     r = client.post("/api/liquidaciones", json={**PAGO, "empleado_id": emp["id"], "periodo": "2026-09",
                                                 "horas_100": "2"})
     assert r.status_code == 201
     codigos = {c["codigo"] for c in r.json["conceptos"]}
     assert {"JARD", "VIAT", "TIT", "HE100"} <= codigos and "SIND" not in codigos and "RES" not in codigos
+    ant = next(c for c in r.json["conceptos"] if c["codigo"] == "ANT")
+    assert D(str(ant["importe"])) == D("145261.80")  # 6 años al 2% aunque sea media jornada
 
     r = client.post("/api/liquidaciones", json={**PAGO, "empleado_id": emp["id"], "periodo": "2026-09",
                                                 "inasistencias_injustificadas": "1"})

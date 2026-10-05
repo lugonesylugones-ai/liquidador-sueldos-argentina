@@ -162,6 +162,7 @@ def liquidar_suteryh(
     factor_adicional: Decimal | None = None,
     tope_base_imponible: Decimal | None = None,
     zona_base: str = "remunerativo",
+    antiguedad_completa: bool = False,
 ) -> Liquidacion:
     """Un mes de un trabajador de edificio.
 
@@ -172,6 +173,8 @@ def liquidar_suteryh(
     suma fija; por defecto 0,5 en jornada reducida y 1 en el resto.
     `zona_desfavorable`: suma la zona en este mismo recibo; para el recibo aparte, ver
     `liquidar_zona_fria`. `zona_base`: "remunerativo" o "basico_antiguedad".
+    `antiguedad_completa`: paga la antigüedad al 2% aunque el cargo sea de jornada reducida
+    (mejora sobre el convenio que algunos consorcios vienen pagando).
     """
     if cargo not in CARGO_POR_NOMBRE:
         raise ValueError(f"cargo desconocido: {cargo}")
@@ -224,7 +227,7 @@ def liquidar_suteryh(
     if anios:
         # Jornada reducida: 1% = la mitad exacta del 2% (12.105,15 y no el 12.105,20 redondeado
         # de la planilla), como los recibos.
-        por_anio = adic["plus_antiguedad_2pct"] / (2 if media_jornada else 1)
+        por_anio = adic["plus_antiguedad_2pct"] / (2 if media_jornada and not antiguedad_completa else 1)
         _agregar(liq, "ANT", "Antigüedad", f"{anios} {'año' if anios == 1 else 'años'} × $ {pesos(por_anio)}",
                  "remunerativo", por_anio * anios)
 

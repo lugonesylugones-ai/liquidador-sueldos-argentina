@@ -112,7 +112,8 @@ def empleados(conn, empresa_id: int) -> list:
 
 
 # Datos propios de los encargados de edificio (CCT 589/10), con sus valores por defecto.
-EXTRAS_SUTERYH = {"afiliado": True, "retira_residuos": False, "tareas": [], "tramos_titulo": 0}
+EXTRAS_SUTERYH = {"afiliado": True, "retira_residuos": False, "tareas": [], "tramos_titulo": 0,
+                  "antiguedad_completa": False}
 
 
 def extras(emp) -> dict:
@@ -184,7 +185,8 @@ def _extras_suteryh(d: dict) -> dict:
     if not 0 <= tramos <= 3:
         raise ErrorDatos("'tramos_titulo' va de 0 a 3")
     return {"afiliado": si_no(d, "afiliado", True), "retira_residuos": si_no(d, "retira_residuos", False),
-            "tareas": list(dict.fromkeys(tareas)), "tramos_titulo": tramos}
+            "tareas": list(dict.fromkeys(tareas)), "tramos_titulo": tramos,
+            "antiguedad_completa": si_no(d, "antiguedad_completa", False)}
 
 
 def escalas(conn, convenio: str = CONVENIO_COMERCIO) -> list:
@@ -426,7 +428,8 @@ def _mensual_suteryh(conn, emp, periodo_: str, d: dict, ingreso: date, dias: int
             horas_50=decimal_opcional(d, "horas_50") or Decimal("0"),
             horas_100=decimal_opcional(d, "horas_100") or Decimal("0"),
             afiliado=ex["afiliado"], alicuota_sindical=decimal_opcional(d, "alicuota_sindical"),
-            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"),
+            antiguedad_completa=ex["antiguedad_completa"])
     except ValueError as exc:
         raise ErrorDatos(str(exc))
 
