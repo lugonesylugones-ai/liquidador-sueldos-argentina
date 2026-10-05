@@ -111,7 +111,7 @@ def test_datos_del_trabajador_desde_la_web(client):
     assert r02[73:95] == "0110000000000000000001" and r02[114] == "3"
     assert r04[13:16] == "102" and r04[62:68] == "104306"
     pagina = client.get(f"/empresas/{e}?editar={emp['id']}").text
-    assert 'value="104306"' in pagina and "ARCA: Libro de Sueldos Digital" in pagina
+    assert 'value="104306"' in pagina and "Exportar Libro de Sueldos Digital" in pagina
 
 
 def test_encargado_con_horas_extra_y_zona_aparte(client):
