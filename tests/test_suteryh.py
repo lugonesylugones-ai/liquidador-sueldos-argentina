@@ -313,10 +313,20 @@ def test_zona_fria_en_recibo_aparte(client):
     assert "Zona fría" in client.get(f"/empresas/{e}").text
     assert client.get("/").status_code == 200
 
-    # La zona del recibo aparte cuenta para el aguinaldo como haber del mes.
-    r = client.post(f"/api/empresas/{e}/sac", json={**PAGO, "periodo": "2026-09"})
-    sac = client.get(f"/liquidaciones/{r.json['liquidaciones'][0]['id']}").text
-    assert "2.468.305,95" in sac  # 1.645.537,30 + 822.768,65
+    # La zona del recibo aparte tiene su propio aguinaldo, en otro recibo (como la hoja SAC de la planilla).
+    r = client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "sac", "periodo": "2026-09"},
+                    follow_redirects=True)
+    assert "más 1 de zona fría aparte" in r.text
+    sac_id = re.search(r'href="/liquidaciones/(\d+)"', r.text).group(1)
+    sac = client.get(f"/liquidaciones/{sac_id}").text
+    assert "1.645.537,30" in sac and "822.768,65" not in sac
+    sac_zona = client.get(f"/empresas/{e}/liquidaciones/2026-09?tipo=sac_zona_fria").text
+    assert "Aguinaldo s/ zona fría 2026-09" in sac_zona
+    liq_id = re.search(r'href="/liquidaciones/(\d+)"', sac_zona).group(1)
+    detalle = client.get(f"/liquidaciones/{liq_id}").text
+    assert "SAC s/ zona fría" in detalle and "822.768,65" in detalle
+    pdf = PdfReader(BytesIO(client.get(f"/api/empresas/{e}/recibos/2026-09.pdf?tipo=sac_zona_fria").data))
+    assert "SAC s/ zona fría" in pdf.pages[0].extract_text()
 
     # Si el consorcio pasa la zona al mismo recibo, el recibo aparte se borra al reliquidar.
     client.post(f"/empresas/{e}/edificio", data={"categoria": "3", "zona_desfavorable": "1"})

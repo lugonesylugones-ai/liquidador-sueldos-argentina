@@ -21,7 +21,7 @@
   <div class="tabla" style="margin-top:1rem"><table>
     <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th></tr>
     {% for l in liquidaciones %}
-    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
+    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% elif l.tipo == 'sac_zona_fria' %}<span class="chip">Aguinaldo zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
             <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>

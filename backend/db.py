@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS liquidaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empleado_id INTEGER NOT NULL REFERENCES empleados(id),
     periodo TEXT NOT NULL,            -- YYYY-MM (para SAC, el mes de pago)
-    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac', 'final', 'zona_fria')),
+    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac', 'final', 'zona_fria', 'sac_zona_fria')),
     fecha_pago TEXT NOT NULL,
     lugar_pago TEXT NOT NULL,
     resultado TEXT NOT NULL,          -- JSON con conceptos y totales
@@ -116,7 +116,7 @@ def _migrar_tipo_final(conn: sqlite3.Connection) -> None:
     """Bases viejas: amplía el CHECK de liquidaciones.tipo (liquidación final, zona fría)."""
     sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'liquidaciones'"
                        ).fetchone()[0]
-    if "'zona_fria'" in sql:
+    if "'sac_zona_fria'" in sql:
         return
     nueva = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS liquidaciones"):].split(";")[0]
     conn.execute("PRAGMA foreign_keys = OFF")

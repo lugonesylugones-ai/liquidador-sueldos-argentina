@@ -137,7 +137,7 @@ planillas de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcada
 | Vivienda | No se liquida (los recibos no la traen); queda como opción del motor |
 | Residuos, tareas, título | Retiro por UF, plus por tarea fijos, título 5% por tramo |
 | Horas extra | 50% y 100%; valor hora = (básico + antigüedad + residuos + tareas, sin suma fija ni viáticos) / 200, o / 100 en jornada reducida |
-| Zona fría | 50%, por consorcio: sobre todo lo remunerativo o sobre básico + antigüedad, en el mismo recibo o en un recibo aparte con sus propios aportes y redondeo. La del recibo aparte cuenta para el SAC (inferido) |
+| Zona fría | 50%, por consorcio: sobre todo lo remunerativo o sobre básico + antigüedad, en el mismo recibo o en un recibo aparte con sus propios aportes y redondeo. La del recibo aparte tiene su propio SAC (mejor zona del semestre / 2), en otro recibo, como la hoja SAC de la planilla de los consorcios |
 | Aportes | Jubilación 11%, PAMI 3%, obra social 3%, Caja Protección Familia 1%, FMVDD 1%, seguro art. 27 bis 0,75%, cuota sindical 2% solo afiliados |
 | Redondeo | El neto se redondea para arriba al peso |
 | Contribuciones del convenio | Se muestran aparte (no van en el recibo): CAPAF 4%, FMVDD 1,5%, seguro 0,75%, SERACARH 0,5% |

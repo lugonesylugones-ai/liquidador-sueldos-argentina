@@ -75,10 +75,11 @@ def _filas_periodo(liq: Liquidacion, normal) -> list:
                        f"(vigente desde {_f(liq.vigencia_escala)})", normal),
              Paragraph(f"<b>Preaviso:</b> {preaviso}", normal)],
         ]
-    if liq.tipo == "sac":
+    if liq.tipo in ("sac", "sac_zona_fria"):
         semestre = "1°" if int(liq.periodo[5:]) <= 6 else "2°"
+        sobre = " s/ zona fría" if liq.tipo == "sac_zona_fria" else ""
         return [
-            [Paragraph(f"<b>Período:</b> SAC {semestre} semestre {liq.periodo[:4]}", normal),
+            [Paragraph(f"<b>Período:</b> SAC{sobre} {semestre} semestre {liq.periodo[:4]}", normal),
              Paragraph(f"<b>Días del semestre:</b> {liq.dias_trabajados}", normal)],
             [Paragraph(f"<b>Mejor remuneración del semestre:</b> $ {pesos(liq.basico_escala)}", normal),
              Paragraph(f"<b>Antigüedad:</b> {_anios(liq)}", normal)],

@@ -182,7 +182,8 @@ def liquidar(empresa_id: int):
 CAMPOS_POR_EMPLEADO = {"inasistencias": "inasistencias_injustificadas", "horas_50": "horas_50",
                        "horas_100": "horas_100"}
 
-TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales", "zona_fria": "Zona fría"}
+TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales", "zona_fria": "Zona fría",
+           "sac_zona_fria": "Aguinaldo s/ zona fría"}
 
 
 def _titulo(tipo: str, periodo: str) -> str:

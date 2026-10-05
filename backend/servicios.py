@@ -431,9 +431,36 @@ def _mensual_suteryh(conn, emp, periodo_: str, d: dict, ingreso: date, dias: int
         raise ErrorDatos(str(exc))
 
 
+def _sac_zona_fria(conn, emp, sac: Liquidacion, d: dict) -> Liquidacion | None:
+    """SAC de la zona fría pagada en recibos aparte: mejor zona del semestre / 2, en su propio recibo
+    (como la hoja SAC de la planilla de los consorcios)."""
+    inicio, fin = semestre_de(sac.periodo)
+    meses = [z for z in _historial(conn, emp["id"], "zona_fria") if inicio <= primer_dia(z.periodo) <= fin]
+    if not meses:
+        return None
+    try:
+        liq = liquidar_sac_suteryh(
+            periodo=sac.periodo, categoria=emp["categoria"], fecha_ingreso=date.fromisoformat(emp["fecha_ingreso"]),
+            fecha_egreso=date.fromisoformat(emp["fecha_egreso"]) if emp["fecha_egreso"] else None,
+            jornada_horas=emp["jornada_horas"], historial=meses, afiliado=extras(emp)["afiliado"],
+            alicuota_sindical=decimal_opcional(d, "alicuota_sindical"),
+            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+    except ValueError as exc:
+        raise ErrorDatos(str(exc))
+    for c in liq.conceptos:
+        if c.codigo == "SAC":
+            c.descripcion = "SAC s/ zona fría"
+    liq.tipo = "sac_zona_fria"
+    return liq
+
+
 def _zona_fria_aparte(conn, emp, mensual: Liquidacion, d: dict) -> Liquidacion | None:
     """Recibo aparte de zona fría para el sueldo de un encargado, si el consorcio lo liquida así."""
-    if emp["convenio"] != CONVENIO_SUTERYH or mensual.tipo != "mensual":
+    if emp["convenio"] != CONVENIO_SUTERYH:
+        return None
+    if mensual.tipo == "sac":
+        return _sac_zona_fria(conn, emp, mensual, d)
+    if mensual.tipo != "mensual":
         return None
     ed = edificio(conn, emp["empresa_id"])
     if not (ed and ed["zona_desfavorable"] and ed["zona_recibo_aparte"]):
@@ -450,15 +477,15 @@ def _zona_fria_aparte(conn, emp, mensual: Liquidacion, d: dict) -> Liquidacion |
 
 
 def _guardar_mes(conn, emp, liq: Liquidacion, pago: dict, d: dict) -> tuple[int, Liquidacion | None]:
-    """Guarda la liquidación y, si corresponde, el recibo aparte de zona fría del mismo mes."""
+    """Guarda la liquidación y, si corresponde, el recibo aparte de zona fría (o de su SAC)."""
     zona = _zona_fria_aparte(conn, emp, liq, d)
     liq_id = _guardar_liquidacion(conn, emp, liq, pago)
-    if liq.tipo == "mensual":
-        if zona is not None:
-            _guardar_liquidacion(conn, emp, zona, pago)
-        else:  # el consorcio dejó de liquidarla aparte: no queda un recibo viejo colgado
-            conn.execute("DELETE FROM liquidaciones WHERE empleado_id = ? AND periodo = ? AND tipo = 'zona_fria'",
-                         (emp["id"], liq.periodo))
+    tipo_zona = {"mensual": "zona_fria", "sac": "sac_zona_fria"}.get(liq.tipo)
+    if zona is not None:
+        _guardar_liquidacion(conn, emp, zona, pago)
+    elif tipo_zona:  # el consorcio dejó de liquidarla aparte: no queda un recibo viejo colgado
+        conn.execute("DELETE FROM liquidaciones WHERE empleado_id = ? AND periodo = ? AND tipo = ?",
+                     (emp["id"], liq.periodo, tipo_zona))
     return liq_id, zona
 
 
@@ -481,18 +508,15 @@ def _final_entre(conn, empleado_id: int, desde: str, hasta: str):
         (empleado_id, desde, hasta)).fetchone()
 
 
-def _historial(conn, empleado_id: int) -> list:
-    """Sueldos mensuales del empleado. La zona fría liquidada en recibo aparte se suma a la
-    remuneración de su mes (cuenta para el SAC como cualquier haber remunerativo)."""
-    rows = conn.execute(
-        "SELECT tipo, resultado FROM liquidaciones WHERE empleado_id = ? AND tipo IN ('mensual', 'zona_fria')",
-        (empleado_id,)).fetchall()
-    liqs = [(r["tipo"], Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"])) for r in rows]
-    meses = {l.periodo: l for t, l in liqs if t == "mensual"}
-    for t, zona in liqs:
-        if t == "zona_fria" and zona.periodo in meses:
-            meses[zona.periodo].total_remunerativo += zona.total_remunerativo
-    return list(meses.values())
+def _historial(conn, empleado_id: int, tipo: str = "mensual") -> list:
+    """Liquidaciones del empleado de un tipo, como meses para el SAC (`tipo` 'zona_fria': los
+    recibos aparte de zona fría, que tienen su propio SAC)."""
+    rows = conn.execute("SELECT resultado FROM liquidaciones WHERE empleado_id = ? AND tipo = ?",
+                        (empleado_id, tipo)).fetchall()
+    meses = [Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"]) for r in rows]
+    for m in meses:
+        m.tipo = "mensual"
+    return meses
 
 
 def liquidar_aguinaldo(conn, emp, periodo_: str, d: dict) -> Liquidacion:
