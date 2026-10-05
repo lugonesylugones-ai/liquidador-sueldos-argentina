@@ -144,6 +144,18 @@ planillas de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcada
 | SAC | Régimen general con los aportes del convenio |
 | Sin hacer | Liquidación final (vacaciones en días hábiles), faltas, suplentes y jornalizados |
 
+## Descuentos varios, cierre de período y copias
+
+- **Descuentos fijos por empleado** (mutual, embargo, préstamo, otro): importe por mes, o porcentaje del
+  bruto menos un mínimo no embargable, con "hasta" para las cuotas. Los importes van en el sueldo; los
+  porcentajes en cada recibo (el mínimo solo en el sueldo). **Anticipo** por empleado al liquidar el mes.
+  Se restan antes de redondear el neto, como en los recibos reales (embargo de Paez y mutuales de Ulloa y
+  Muñoz de 09/2026 dan igual al centavo).
+- **Cerrar período**: en la empresa, una vez presentado el F.931. Cerrado no se puede volver a liquidar
+  (sueldo, SAC ni final) hasta reabrirlo; se siguen bajando los recibos y el archivo de ARCA.
+- **Copias de seguridad**: una por día en la carpeta `copias/` al lado de la base (quedan las últimas 30;
+  `CARPETA_COPIAS` la cambia), y "Bajar copia ahora" en el menú para guardarla en otro lado.
+
 ## ARCA: Libro de Sueldos Digital y F.931
 
 El F.931 se arma desde el Libro de Sueldos Digital (LSD) de ARCA, importando dos archivos de texto

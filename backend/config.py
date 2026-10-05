@@ -24,3 +24,5 @@ class Config:
     UPLOAD_FOLDER = str(BASE_DIR / os.environ.get("UPLOAD_FOLDER", "uploads/"))
     REPORTS_FOLDER = str(BASE_DIR / os.environ.get("REPORTS_FOLDER", "reports/"))
     MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))
+    # Copia diaria de la base: en esta carpeta (por defecto "copias" al lado de la base), las últimas 30.
+    CARPETA_COPIAS = os.environ.get("CARPETA_COPIAS")

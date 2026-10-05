@@ -19,13 +19,19 @@
   </form>
   {% if liquidaciones %}
   <div class="tabla" style="margin-top:1rem"><table>
-    <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th></tr>
-    {% for l in liquidaciones %}
+    <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th><th></th></tr>
+    {% for l in liquidaciones %}{% set nuevo_periodo = loop.first or liquidaciones[loop.index0 - 1].periodo != l.periodo %}
     <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% elif l.tipo == 'sac_zona_fria' %}<span class="chip">Aguinaldo zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
             <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a>
-            {% if l.tipo == 'mensual' %} · <a href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=l.periodo) }}">Libro de Sueldos Digital</a>{% endif %}</td></tr>
+            {% if l.tipo == 'mensual' %} · <a href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=l.periodo) }}">Libro de Sueldos Digital</a>{% endif %}</td>
+        <td>{% if nuevo_periodo %}
+          <form method="post" action="{{ url_for('web.cerrar_periodo', empresa_id=empresa.id, periodo=l.periodo) }}" style="margin:0">
+          {% if l.periodo in cerrados %}<span class="chip">Cerrado</span>
+            <button class="boton chico sec" name="accion" value="reabrir" onclick="return confirm('¿Reabrir {{ l.periodo }}? Se va a poder volver a liquidar un mes ya presentado.')">Reabrir</button>
+          {% else %}<button class="boton chico sec" name="accion" value="cerrar" title="Una vez presentado el F.931">Cerrar período</button>{% endif %}
+          </form>{% endif %}</td></tr>
     {% endfor %}
   </table></div>
   {% endif %}
@@ -148,6 +154,29 @@
         <label>Hijos <input type="number" name="hijos" min="0" max="99" value="{{ ar.hijos or 0 }}"></label>
         <label>CBU (si cobra por banco) <input name="cbu" inputmode="numeric" maxlength="22" value="{{ ar.cbu or '' }}"></label>
       </div>
+    </fieldset>
+    {% set ds = (empleado.descuentos if empleado else []) %}
+    <fieldset>
+      <legend>Descuentos fijos (mutual, embargo, préstamo)</legend>
+      <p class="muted" style="margin-top:0">Se descuentan solos en cada sueldo. Importe fijo por mes, o porcentaje del bruto
+        menos un mínimo no embargable (el porcentaje también se aplica al recibo de zona fría y al aguinaldo).
+        "Hasta" es el último mes, para las cuotas de un préstamo.</p>
+      <div class="tabla"><table>
+        <tr><th>Tipo</th><th>Detalle</th><th>Importe fijo</th><th>o %</th><th>Mínimo no embargable</th><th>Hasta</th></tr>
+        {% for n in range(1, filas_descuento + 1) %}{% set x = ds[n - 1] if ds|length >= n else {} %}
+        <tr>
+          <td><select name="descuento_tipo_{{ n }}" aria-label="Tipo de descuento {{ n }}">
+            <option value="">—</option>
+            {% for t, nombre in [('mutual', 'Mutual'), ('embargo', 'Embargo'), ('prestamo', 'Préstamo'), ('otro', 'Otro')] %}
+            <option value="{{ t }}"{% if x.tipo == t %} selected{% endif %}>{{ nombre }}</option>{% endfor %}
+          </select></td>
+          <td><input name="descuento_detalle_{{ n }}" value="{{ x.detalle or '' }}" placeholder="Oficio 123/26" style="width:9rem"></td>
+          <td><input name="descuento_importe_{{ n }}" inputmode="decimal" value="{{ x.importe or '' }}" style="width:7rem"></td>
+          <td><input name="descuento_porcentaje_{{ n }}" inputmode="decimal" value="{{ x.porcentaje or '' }}" style="width:4rem"></td>
+          <td><input name="descuento_minimo_{{ n }}" inputmode="decimal" value="{{ x.minimo if x.minimo and x.minimo != '0' else '' }}" style="width:7rem"></td>
+          <td><input type="month" name="descuento_hasta_{{ n }}" value="{{ x.hasta or '' }}"></td>
+        </tr>{% endfor %}
+      </table></div>
     </fieldset>
     <fieldset id="datos-suteryh" class="suteryh">
       <legend>Encargados de edificio (CCT 589/10)</legend>

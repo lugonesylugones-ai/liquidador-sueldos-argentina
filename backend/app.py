@@ -6,6 +6,8 @@ convenio. Tienen motor de cálculo Comercio (CCT 130/75) y edificios
 
 Las pantallas están en `web` (raíz del sitio) y la API JSON en `api` (/api).
 """
+from pathlib import Path
+
 from flask import Flask
 
 from . import api, web
@@ -29,6 +31,16 @@ def create_app(config: dict | None = None) -> Flask:
         cargar_estructura(conn)
         if app.config.get("CARGAR_ESCALAS_INICIALES", True):
             cargar_escalas_iniciales(conn)
+
+    def copia_diaria():
+        carpeta = app.config.get("CARPETA_COPIAS") or str(Path(app.config["DATABASE"]).parent / "copias")
+        try:
+            dbmod.copia_de_seguridad(app.config["DATABASE"], carpeta)
+        except OSError as exc:   # una copia que falla no tiene que frenar el trabajo
+            app.logger.warning("No se pudo hacer la copia de seguridad: %s", exc)
+
+    copia_diaria()
+    app.before_request(copia_diaria)
 
     app.register_blueprint(api.bp)
     app.register_blueprint(web.bp)

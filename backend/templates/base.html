@@ -113,7 +113,8 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Escalas</a>
     <a href="{{ url_for('web.convenios') }}" class="{{ 'activo' if seccion == 'web.convenios' }}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/></svg>Sindicatos</a>
-    <div class="pie">Uso local · sin usuarios</div>
+    <div class="pie">Uso local · sin usuarios<br>Copia automática diaria en la carpeta "copias".
+      <a href="{{ url_for('web.bajar_copia') }}" style="color:var(--acento)">Bajar copia ahora</a></div>
   </aside>
   <main>
     {% for categoria, mensaje in get_flashed_messages(with_categories=true) %}

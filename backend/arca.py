@@ -93,6 +93,11 @@ CONCEPTOS = {
     "FAECYS": ConceptoArca("820000", "FAECYS CCT 130/75", SIN_BASE),
     "CPF": ConceptoArca("820000", "Caja Protección Familia art. 19 CCT 589/10", SIN_BASE),
     "FMVDD": ConceptoArca("820000", "FMVDD art. 27 CCT 589/10", SIN_BASE),
+    "DMUT": ConceptoArca("820000", "Mutual", SIN_BASE),
+    "DEMB": ConceptoArca("820000", "Embargo judicial", SIN_BASE),
+    "DPRE": ConceptoArca("810007", "Cuota préstamo", SIN_BASE),
+    "DANT": ConceptoArca("820000", "Anticipo de haberes", SIN_BASE),
+    "DOTR": ConceptoArca("820000", "Otro descuento", SIN_BASE),
 }
 
 # Detracción de la base de contribuciones (art. 22 Ley 27.541) por trabajador de jornada completa;

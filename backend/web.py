@@ -84,7 +84,8 @@ def empresa(empresa_id: int):
         periodo_sugerido=_periodo_sugerido(conn, empresa_id),
         edificio=sv.edificio(conn, empresa_id), suteryh=CONVENIO_SUTERYH,
         con_encargados=any(e["convenio"] == CONVENIO_SUTERYH for e in lista),
-        arca=sv.datos_arca(conn, empresa_id),
+        arca=sv.datos_arca(conn, empresa_id), filas_descuento=sv.FILAS_DESCUENTO,
+        cerrados=sv.periodos_cerrados(conn, empresa_id),
         arca_empleado=empleado["arca"] if empleado else {},
         tareas={t: ADICIONALES[t] for t in TAREAS})
 
@@ -99,6 +100,32 @@ def guardar_edificio(empresa_id: int):
     else:
         flash("Datos del edificio guardados.", "ok")
     return redirect(url_for("web.empresa", empresa_id=empresa_id) + "#edificio")
+
+
+@bp.post("/empresas/<int:empresa_id>/periodos/<periodo>")
+def cerrar_periodo(empresa_id: int, periodo: str):
+    _empresa(empresa_id)
+    cerrar = request.form.get("accion") != "reabrir"
+    try:
+        sv.cerrar_periodo(get_db(), empresa_id, periodo, cerrar)
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+    else:
+        flash(f"Período {periodo} {'cerrado: ya no se puede volver a liquidar' if cerrar else 'reabierto'}.", "ok")
+    return redirect(url_for("web.empresa", empresa_id=empresa_id))
+
+
+@bp.get("/copia-de-seguridad")
+def bajar_copia():
+    """Baja una copia de la base completa, para guardarla en otro lado (pendrive, nube)."""
+    import tempfile
+    from flask import current_app, send_file
+    from .db import copia_de_seguridad
+    carpeta = tempfile.mkdtemp()
+    ruta = copia_de_seguridad(current_app.config["DATABASE"], carpeta)
+    if ruta is None:
+        abort(404)
+    return send_file(ruta, as_attachment=True, download_name=f"liquidador_{date.today().isoformat()}.db")
 
 
 @bp.post("/empresas/<int:empresa_id>/arca")
@@ -194,7 +221,7 @@ def liquidar(empresa_id: int):
 
 # Campos del formulario de liquidación que van por empleado ("<campo>_<id>").
 CAMPOS_POR_EMPLEADO = {"inasistencias": "inasistencias_injustificadas", "horas_50": "horas_50",
-                       "horas_100": "horas_100"}
+                       "horas_100": "horas_100", "anticipo": "anticipo"}
 
 TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales", "zona_fria": "Zona fría",
            "sac_zona_fria": "Aguinaldo s/ zona fría"}

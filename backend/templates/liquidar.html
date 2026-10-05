@@ -36,7 +36,7 @@
     {% if empleados %}
     <div class="tabla"><table>
       <tr><th>Apellido y nombre</th><th>Categoría</th><th class="num">Jornada</th>
-          {% if tipo == 'mensual' %}<th>Faltas sin justificar</th><th>Horas extra 50% / 100%</th>{% endif %}</tr>
+          {% if tipo == 'mensual' %}<th>Faltas sin justificar</th><th>Horas extra 50% / 100%</th><th>Anticipo</th>{% endif %}</tr>
       {% for e in empleados %}
       <tr><td>{{ e.apellido }}, {{ e.nombre }}</td><td>{{ e.categoria }}</td><td class="num">{{ e.jornada_horas }} hs</td>
           {% if tipo == 'mensual' %}
@@ -47,11 +47,14 @@
           {% else %}
           <td><input type="number" min="0" max="30" name="inasistencias_{{ e.id }}" placeholder="0" style="width:5.5rem"></td>
           <td class="muted">—</td>
-          {% endif %}{% endif %}</tr>
+          {% endif %}
+          <td><input inputmode="decimal" name="anticipo_{{ e.id }}" placeholder="0" style="width:6.5rem" aria-label="Anticipo de haberes"></td>
+          {% endif %}</tr>
       {% endfor %}
     </table></div>
     {% if tipo == 'mensual' %}<p class="muted">Comercio: cualquier falta sin justificar hace perder el presentismo y descuenta 1/30 por día.
-      Encargados de edificio: horas extra al 50% (días comunes) y al 100% (francos y feriados).</p>{% endif %}
+      Encargados de edificio: horas extra al 50% (días comunes) y al 100% (francos y feriados).
+      Anticipo: lo que ya se le entregó a cuenta este mes. Mutual, embargos y préstamos se cargan en cada empleado y se descuentan solos.</p>{% endif %}
     {% else %}
     <p class="muted">No hay empleados que hayan trabajado en este período.</p>
     {% endif %}

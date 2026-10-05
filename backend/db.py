@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS datos_arca (
     zona TEXT NOT NULL                -- tabla "Localidades / zonas"
 );
 
+-- Períodos ya presentados (F.931): no se pueden volver a liquidar sin reabrirlos.
+CREATE TABLE IF NOT EXISTS periodos_cerrados (
+    empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+    periodo TEXT NOT NULL,            -- YYYY-MM
+    cerrado TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (empresa_id, periodo)
+);
+
 CREATE TABLE IF NOT EXISTS escalas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     convenio TEXT NOT NULL REFERENCES convenios(codigo),
@@ -148,3 +156,26 @@ def close_db(_exc=None) -> None:
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+def copia_de_seguridad(origen: str, carpeta: str, conservar: int = 30) -> str | None:
+    """Copia la base a `carpeta` (una por día, con la fecha en el nombre) y borra las más viejas.
+
+    Usa la API de backup de SQLite, que copia bien aunque la base esté abierta.
+    """
+    from datetime import date
+    from pathlib import Path
+    if origen == ":memory:" or not Path(origen).exists():
+        return None
+    destino_dir = Path(carpeta)
+    destino_dir.mkdir(parents=True, exist_ok=True)
+    destino = destino_dir / f"{Path(origen).stem}_{date.today().isoformat()}.db"
+    if not destino.exists():
+        with sqlite3.connect(origen) as src, sqlite3.connect(destino) as dst:
+            src.backup(dst)
+        dst.close()
+        src.close()
+    copias = sorted(destino_dir.glob(f"{Path(origen).stem}_*.db"))
+    for vieja in copias[:-conservar]:
+        vieja.unlink()
+    return str(destino)

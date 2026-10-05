@@ -573,3 +573,30 @@ def liquidar_final(
 
     _aportes_y_neto(liq, factor, tope_base_imponible)
     return liq
+
+
+def aplicar_descuentos_varios(liq: Liquidacion, descuentos: list) -> None:
+    """Agrega descuentos que no salen del convenio (mutual, embargo, préstamo, anticipo) y rehace
+    el redondeo: el recibo resta todo antes de llevar el neto al peso entero.
+
+    `descuentos`: lista de (código, descripción, detalle, importe).
+    """
+    descuentos = [d for d in descuentos if d[3] > 0]
+    if not descuentos:
+        return
+    redondeo = sum((c.importe for c in liq.conceptos if c.codigo == "RED"), Decimal("0"))
+    liq.conceptos = [c for c in liq.conceptos if c.codigo != "RED"]
+    total_nr = liq.total_no_remunerativo - redondeo
+    for codigo, descripcion, detalle, importe in descuentos:
+        liq.conceptos.append(Concepto(codigo, descripcion, detalle, "descuento", redondear(importe)))
+    total_desc = sum((c.importe for c in liq.descuentos()), Decimal("0"))
+    neto = liq.total_remunerativo + total_nr - total_desc
+    if neto < 0:
+        raise ValueError(f"Los descuentos (${pesos(total_desc)}) superan lo que cobra en el recibo")
+    redondeo = neto.to_integral_value(rounding=ROUND_CEILING) - neto
+    if redondeo:
+        liq.conceptos.append(Concepto("RED", "Redondeo", "Neto al peso entero", "no_remunerativo", redondeo))
+        total_nr += redondeo
+    liq.total_no_remunerativo = total_nr
+    liq.total_descuentos = total_desc
+    liq.neto = liq.total_remunerativo + total_nr - total_desc

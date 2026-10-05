@@ -9,13 +9,14 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
-from .calculo import (CAUSAS_EGRESO, Liquidacion, dias_del_mes, liquidar_comercio, liquidar_final,
+from .calculo import (CAUSAS_EGRESO, Liquidacion, aplicar_descuentos_varios, dias_del_mes, liquidar_comercio, liquidar_final,
                       liquidar_sac, primer_dia, semestre_de, ultimo_dia)
 from .calculo_suteryh import (ADICIONALES, BASES_ZONA, CARGO_POR_NOMBRE, CONVENIO_SUTERYH, TAREAS, fila_basico,
                               liquidar_sac_suteryh, liquidar_suteryh, liquidar_zona_fria, nombres_escala)
 from . import arca
 from .cuit import normalizar_cuit
 from .empleados import leer_empleados, validar_categoria
+from .formato import pesos
 from .escalas import CONVENIO_COMERCIO, basico_vigente, guardar_escala, leer_plantilla
 from .recibo_pdf import DatosRecibo, generar_recibos
 
@@ -107,7 +108,8 @@ def empresa(conn, empresa_id: int):
 
 
 def empleados(conn, empresa_id: int) -> list:
-    return [{**dict(r), "extras": extras(r), "arca": arca_empleado(r)} for r in conn.execute(
+    return [{**dict(r), "extras": extras(r), "arca": arca_empleado(r), "descuentos": descuentos_empleado(r)}
+            for r in conn.execute(
         "SELECT * FROM empleados WHERE empresa_id = ? ORDER BY fecha_egreso IS NOT NULL, apellido, nombre",
         (empresa_id,))]
 
@@ -121,6 +123,7 @@ def extras(emp) -> dict:
     """Datos del empleado propios de su convenio (columna `extras`)."""
     guardados = json.loads(emp["extras"]) if emp["extras"] else {}
     guardados.pop("arca", None)   # los datos para el F.931 van aparte (arca_empleado)
+    guardados.pop("descuentos", None)   # y los descuentos varios (descuentos_empleado)
     return {**EXTRAS_SUTERYH, **guardados} if emp["convenio"] == CONVENIO_SUTERYH else guardados
 
 
@@ -311,7 +314,7 @@ def guardar_empleado(conn, empresa_id: int, d: dict) -> int:
             "fecha_ingreso": ingreso.isoformat(), "jornada_horas": jornada,
             "fecha_egreso": egreso.isoformat() if egreso else None,
             "extras": json.dumps({**(_extras_suteryh(d) if convenio == CONVENIO_SUTERYH else {}),
-                                  "arca": _extras_arca(d)})})
+                                  "arca": _extras_arca(d), "descuentos": _extras_descuentos(d)})})
     except sqlite3.IntegrityError as exc:
         raise ErrorDatos(f"No se pudo guardar el empleado: {exc}")
     conn.commit()
@@ -485,6 +488,9 @@ def _zona_fria_aparte(conn, emp, mensual: Liquidacion, d: dict) -> Liquidacion |
 def _guardar_mes(conn, emp, liq: Liquidacion, pago: dict, d: dict) -> tuple[int, Liquidacion | None]:
     """Guarda la liquidación y, si corresponde, el recibo aparte de zona fría (o de su SAC)."""
     zona = _zona_fria_aparte(conn, emp, liq, d)
+    _descontar(emp, liq, d)
+    if zona is not None:
+        _descontar(emp, zona, d)
     liq_id = _guardar_liquidacion(conn, emp, liq, pago)
     tipo_zona = {"mensual": "zona_fria", "sac": "sac_zona_fria"}.get(liq.tipo)
     if zona is not None:
@@ -569,6 +575,7 @@ def liquidar_egreso(conn, empleado_id: int, d: dict) -> tuple[int, Liquidacion]:
     if egreso < ingreso:
         raise ErrorDatos("La fecha de egreso es anterior a la de ingreso")
     periodo_ = egreso.strftime("%Y-%m")
+    _exigir_abierto(conn, emp["empresa_id"], periodo_)
     pago = datos_pago(d, empresa(conn, emp["empresa_id"]))
     escala, extraordinaria = _escala_del_mes(conn, emp, periodo_, d)
     try:
@@ -584,6 +591,7 @@ def liquidar_egreso(conn, empleado_id: int, d: dict) -> tuple[int, Liquidacion]:
             tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
     except ValueError as exc:
         raise ErrorDatos(str(exc))
+    _descontar(emp, liq, d)
     conn.execute("UPDATE empleados SET fecha_egreso = ? WHERE id = ?", (egreso.isoformat(), emp["id"]))
     # La final reemplaza al sueldo y al SAC del mes del egreso, y a una final anterior mal cargada.
     conn.execute("""DELETE FROM liquidaciones WHERE empleado_id = ?
@@ -620,7 +628,31 @@ def datos_pago(d: dict, emp_empresa) -> dict:
     }
 
 
+def periodos_cerrados(conn, empresa_id: int) -> set:
+    return {r["periodo"] for r in conn.execute(
+        "SELECT periodo FROM periodos_cerrados WHERE empresa_id = ?", (empresa_id,))}
+
+
+def _exigir_abierto(conn, empresa_id: int, periodo_: str) -> None:
+    if periodo_ in periodos_cerrados(conn, empresa_id):
+        raise ErrorDatos(f"El período {periodo_} está cerrado (ya presentado). Reabrilo para volver a liquidarlo")
+
+
+def cerrar_periodo(conn, empresa_id: int, periodo_: str, cerrar: bool = True) -> None:
+    """Cierra un período ya presentado (o lo reabre): cerrado, no se puede volver a liquidar."""
+    if empresa(conn, empresa_id) is None:
+        raise ErrorDatos("La empresa no existe")
+    periodo({"periodo": periodo_})
+    if cerrar:
+        conn.execute("INSERT OR IGNORE INTO periodos_cerrados (empresa_id, periodo) VALUES (?, ?)",
+                     (empresa_id, periodo_))
+    else:
+        conn.execute("DELETE FROM periodos_cerrados WHERE empresa_id = ? AND periodo = ?", (empresa_id, periodo_))
+    conn.commit()
+
+
 def _guardar_liquidacion(conn, emp, liq: Liquidacion, pago: dict) -> int:
+    _exigir_abierto(conn, emp["empresa_id"], liq.periodo)
     resultado = {"liquidacion": liq.to_dict(), "ultimo_deposito": pago["ultimo_deposito"]}
     cur = conn.execute(
         """INSERT INTO liquidaciones (empleado_id, periodo, tipo, fecha_pago, lugar_pago, resultado)
@@ -668,6 +700,7 @@ def liquidar_empresa(conn, empresa_id: int, tipo: str, d: dict,
     if emp_empresa is None:
         raise ErrorDatos("La empresa no existe")
     periodo_ = periodo(d)
+    _exigir_abierto(conn, empresa_id, periodo_)
     pago = datos_pago(d, emp_empresa)
     hechas, errores = [], []
     for emp in empleados_del_periodo(conn, empresa_id, tipo, periodo_):
@@ -749,6 +782,82 @@ def resumen_general(conn) -> dict:
     return {"empresas": r["empresas"], "activos": r["activos"], "ultimo_periodo": ultimo,
             "neto_ultimo": neto, "recibos_ultimo": recibos,
             "convenios": conn.execute("SELECT COUNT(*) FROM convenios").fetchone()[0]}
+
+
+# --- Descuentos varios ----------------------------------------------------------
+# Tipo -> (código del recibo, descripción). No salen del convenio: los carga quien liquida.
+TIPOS_DESCUENTO = {"mutual": ("DMUT", "Mutual"), "embargo": ("DEMB", "Embargo judicial"),
+                   "prestamo": ("DPRE", "Cuota préstamo"), "otro": ("DOTR", "Otro descuento")}
+FILAS_DESCUENTO = 3   # cuántos descuentos fijos se cargan por empleado desde la pantalla
+
+
+def descuentos_empleado(emp) -> list:
+    return (json.loads(emp["extras"]) if emp["extras"] else {}).get("descuentos", [])
+
+
+def _descuento(d: dict, n: int | None = None) -> dict | None:
+    """Un descuento fijo: importe por mes o porcentaje (con un mínimo no embargable)."""
+    def campo(nombre):
+        return d.get(f"descuento_{nombre}_{n}") if n is not None else d.get(nombre)
+    tipo = (campo("tipo") or "").strip()
+    importe = decimal_opcional({"importe": campo("importe")}, "importe")
+    porcentaje = decimal_opcional({"porcentaje": campo("porcentaje")}, "porcentaje")
+    if not tipo and importe is None and porcentaje is None:
+        return None
+    if tipo not in TIPOS_DESCUENTO:
+        raise ErrorDatos(f"Tipo de descuento desconocido: {tipo or '(vacío)'}. Valen: {', '.join(TIPOS_DESCUENTO)}")
+    if (importe is None) == (porcentaje is None):
+        raise ErrorDatos("Cada descuento lleva un importe fijo o un porcentaje, no los dos")
+    if (importe is not None and importe <= 0) or (porcentaje is not None and not 0 < porcentaje <= 100):
+        raise ErrorDatos("El importe tiene que ser mayor a cero y el porcentaje entre 0 y 100")
+    minimo = decimal_opcional({"minimo": campo("minimo")}, "minimo") or Decimal("0")
+    hasta = (campo("hasta") or "").strip()
+    if hasta:
+        try:
+            primer_dia(hasta)
+        except ValueError:
+            raise ErrorDatos("'hasta' es el último período del descuento, AAAA-MM")
+    out = {"tipo": tipo, "detalle": (campo("detalle") or "").strip()[:60], "hasta": hasta}
+    if importe is not None:
+        out["importe"] = str(importe)
+    else:
+        out["porcentaje"], out["minimo"] = str(porcentaje), str(minimo)
+    return out
+
+
+def _extras_descuentos(d: dict) -> list:
+    if isinstance(d.get("descuentos"), list):   # API JSON
+        return [x for x in (_descuento(item) for item in d["descuentos"]) if x]
+    return [x for x in (_descuento(d, n) for n in range(1, FILAS_DESCUENTO + 1)) if x]
+
+
+def _descontar(emp, liq: Liquidacion, d: dict) -> None:
+    """Descuentos fijos del empleado y el anticipo del mes. Los importes fijos van en el sueldo
+    (o la final); los porcentajes, en cada recibo, y el mínimo no embargable solo en el sueldo."""
+    principal = liq.tipo in ("mensual", "final")
+    base = liq.total_remunerativo + liq.total_no_remunerativo - sum(
+        (c.importe for c in liq.conceptos if c.codigo == "RED"), Decimal("0"))
+    items = []
+    for x in descuentos_empleado(emp):
+        if x.get("hasta") and liq.periodo > x["hasta"]:
+            continue
+        codigo, nombre = TIPOS_DESCUENTO[x["tipo"]]
+        descripcion = f"{nombre} {x['detalle']}".strip()
+        if "importe" in x:
+            if principal:
+                items.append((codigo, descripcion, "Importe fijo mensual", Decimal(x["importe"])))
+            continue
+        pct, minimo = Decimal(x["porcentaje"]), Decimal(x["minimo"]) if principal else Decimal("0")
+        sujeto = max(base - minimo, Decimal("0"))
+        detalle = f"{pesos(pct)}% s/ $ {pesos(sujeto)}" + (f" (bruto - $ {pesos(minimo)})" if minimo else "")
+        items.append((codigo, descripcion, detalle, sujeto * pct / 100))
+    anticipo = decimal_opcional(d, "anticipo")
+    if anticipo and principal:
+        items.append(("DANT", "Anticipo de haberes", "Entregado a cuenta", anticipo))
+    try:
+        aplicar_descuentos_varios(liq, items)
+    except ValueError as exc:
+        raise ErrorDatos(str(exc))
 
 
 # --- ARCA: Libro de Sueldos Digital y F.931 ------------------------------------
