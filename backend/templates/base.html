@@ -8,19 +8,19 @@
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --fondo: #3a0f36; --fondo-2: #2a0a27; --lateral: #4f1748; --panel: #4a1543; --panel-2: #561a4e;
-      --texto: #fbeef8; --suave: #cfa9c7; --borde: rgba(255,255,255,.09); --campo: rgba(0,0,0,.22);
-      --g1: linear-gradient(90deg, #ff2fb4, #ff6ad5);
-      --g2: linear-gradient(90deg, #b13cff, #3a7bff);
-      --g3: linear-gradient(90deg, #ff5a36, #ff3fa4);
-      --g4: linear-gradient(90deg, #ffd83b, #ff9f1c);
-      --acento: #ff5ccf; --ok: #3ee6a0; --error: #ff6b81; --aviso: #ffcf4a;
+      --fondo: #10213a; --fondo-2: #0b1729; --lateral: #142a48; --panel: #16304f; --panel-2: #1b3a5e;
+      --texto: #eef4fb; --suave: #a9bdd4; --borde: rgba(255,255,255,.09); --campo: rgba(0,0,0,.22);
+      --g1: linear-gradient(90deg, #2f6fe0, #4f9bff);
+      --g2: linear-gradient(90deg, #1f8a9e, #33b5c9);
+      --g3: linear-gradient(90deg, #4b5fc4, #6f86e8);
+      --g4: linear-gradient(90deg, #2a9d74, #45c495);
+      --acento: #5aa9ff; --ok: #3ee6a0; --error: #ff6b81; --aviso: #ffcf4a;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; }
     html { background: var(--fondo-2); }
     body { font: 14.5px/1.5 "Poppins", system-ui, sans-serif; color: var(--texto);
-           background: radial-gradient(1200px 700px at 80% -10%, #5a1a52 0%, transparent 60%), linear-gradient(160deg, var(--fondo), var(--fondo-2));
+           background: radial-gradient(1200px 700px at 80% -10%, #1e4170 0%, transparent 60%), linear-gradient(160deg, var(--fondo), var(--fondo-2));
            background-attachment: fixed; min-height: 100vh; }
     a { color: var(--acento); }
     .app { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
@@ -31,7 +31,7 @@
     aside a { display: flex; align-items: center; gap: 12px; padding: 10px 26px; color: var(--texto);
               text-decoration: none; border-left: 3px solid transparent; font-size: .92rem; }
     aside a:hover { background: rgba(255,255,255,.04); }
-    aside a.activo { color: #ffd83b; border-left-color: #ffd83b; background: rgba(255,216,59,.06); }
+    aside a.activo { color: #7cc0ff; border-left-color: #7cc0ff; background: rgba(124,192,255,.08); }
     aside svg { width: 18px; height: 18px; flex: none; }
     aside .pie { margin-top: auto; padding: 0 26px; color: var(--suave); font-size: .75rem; }
     main { padding: 28px 32px 48px; max-width: 1180px; width: 100%; min-width: 0; }
@@ -47,7 +47,7 @@
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
     .tile { border-radius: 14px; padding: 16px 18px; color: #fff; box-shadow: 0 10px 26px rgba(0,0,0,.25); }
     .tile.g1 { background: var(--g1); } .tile.g2 { background: var(--g2); }
-    .tile.g3 { background: var(--g3); } .tile.g4 { background: var(--g4); color: #3a1300; }
+    .tile.g3 { background: var(--g3); } .tile.g4 { background: var(--g4); }
     .tile .valor { font-size: clamp(1.1rem, 1.7vw, 1.5rem); white-space: nowrap; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
     .tile .rotulo { font-size: .8rem; opacity: .9; }
     .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 16px; }
@@ -65,7 +65,7 @@
     select option { background: var(--panel-2); }
     button, .boton { font: inherit; font-weight: 500; padding: 9px 18px; border-radius: 999px; border: 0;
                      background: var(--g1); color: #fff; cursor: pointer; text-decoration: none; display: inline-block;
-                     box-shadow: 0 6px 18px rgba(255,47,180,.3); }
+                     box-shadow: 0 6px 18px rgba(47,111,224,.3); }
     button:disabled { opacity: .45; cursor: default; }
     .boton.sec { background: transparent; color: var(--texto); border: 1px solid var(--borde); box-shadow: none; }
     .boton.chico { padding: 4px 12px; font-size: .8rem; }
@@ -84,7 +84,7 @@
     .aviso { border-left: 4px solid var(--aviso); background: rgba(255,207,74,.08); padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; }
     .chip { font-size: .72rem; padding: 2px 9px; border-radius: 99px; background: rgba(255,207,74,.15); color: var(--aviso); white-space: nowrap; }
     .chip.ok { background: rgba(62,230,160,.14); color: var(--ok); }
-    .chip.rosa { background: rgba(255,92,207,.15); color: var(--acento); }
+    .chip.rosa { background: rgba(90,169,255,.15); color: var(--acento); }
     details summary { cursor: pointer; color: var(--acento); }
     .barra { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
     .barra span { display: block; height: 100%; border-radius: 99px; }
@@ -93,7 +93,7 @@
       aside { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px 8px; gap: 0; }
       .marca { width: 100%; padding: 4px 12px 10px; }
       aside a { padding: 8px 12px; border-left: 0; border-bottom: 2px solid transparent; }
-      aside a.activo { border-bottom-color: #ffd83b; }
+      aside a.activo { border-bottom-color: #7cc0ff; }
       aside .pie { display: none; }
       main { padding: 20px 16px 40px; }
       .dos { grid-template-columns: 1fr; }
