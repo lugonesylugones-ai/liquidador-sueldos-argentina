@@ -24,7 +24,8 @@
     <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% elif l.tipo == 'sac_zona_fria' %}<span class="chip">Aguinaldo zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
-            <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>
+            <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a>
+            {% if l.tipo == 'mensual' %} · <a href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=l.periodo) }}">ARCA (TXT)</a>{% endif %}</td></tr>
     {% endfor %}
   </table></div>
   {% endif %}
@@ -61,6 +62,23 @@
   </form>
 </section>
 {% endif %}
+
+<section id="arca">
+  <h2>ARCA: Libro de Sueldos Digital y F.931</h2>
+  <p class="muted">Con cada período liquidado se baja un archivo para importar en el Libro de Sueldos Digital
+    (Liquidaciones &gt; Importar desde archivo), que arma el F.931. Antes, una sola vez, subí los
+    <a href="{{ url_for('api.conceptos_arca', empresa_id=empresa.id) }}">conceptos para ARCA</a> en
+    Parametrización de conceptos. Revisá estos códigos contra tu último F.931.</p>
+  <form method="post" action="{{ url_for('web.guardar_datos_arca', empresa_id=empresa.id) }}">
+    <div class="grilla">
+      <label>Tipo de empleador <input name="tipo_empleador" maxlength="1" required value="{{ arca.tipo_empleador }}" title="1 = Dec. 814/01 art. 2 inc. b"></label>
+      <label>Actividad <input name="actividad" maxlength="3" required value="{{ arca.actividad }}"></label>
+      <label>Zona <input name="zona" maxlength="2" required value="{{ arca.zona }}" title="04 = Resto de Buenos Aires"></label>
+    </div>
+    <div class="acciones"><button>Guardar códigos</button>
+      {% if not arca.cargados %}<span class="muted">Son los valores por defecto: confirmalos.</span>{% endif %}</div>
+  </form>
+</section>
 
 <section>
   <h2>Empleados</h2>
@@ -102,6 +120,18 @@
       <label>Fecha de egreso <input type="date" name="fecha_egreso" value="{{ e.fecha_egreso or '' }}"></label>
     </div>
     {% set ex = e.extras or {} %}
+    {% set ar = arca_empleado or {} %}
+    <fieldset>
+      <legend>Para el F.931 de ARCA</legend>
+      <div class="grilla">
+        <label>Obra social (código) <input name="obra_social" inputmode="numeric" maxlength="6" value="{{ ar.obra_social or '' }}" placeholder="Según convenio: 126205 OSECAC, 106401 OSPERYH"></label>
+        <label>Cónyuge <select name="conyuge">
+          <option value="0">No</option><option value="1"{% if ar.conyuge %} selected{% endif %}>Sí</option>
+        </select></label>
+        <label>Hijos <input type="number" name="hijos" min="0" max="99" value="{{ ar.hijos or 0 }}"></label>
+        <label>CBU (si cobra por banco) <input name="cbu" inputmode="numeric" maxlength="22" value="{{ ar.cbu or '' }}"></label>
+      </div>
+    </fieldset>
     <fieldset id="datos-suteryh" class="suteryh">
       <legend>Encargados de edificio (CCT 589/10)</legend>
       <p class="muted" style="margin-top:0">La jornada sale del cargo: los de media jornada liquidan 4 hs.</p>
