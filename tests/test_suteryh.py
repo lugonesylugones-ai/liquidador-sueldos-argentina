@@ -292,7 +292,36 @@ def test_datos_del_encargado_y_errores(client):
     assert r.status_code == 400
     r = client.put(f"/api/empresas/{e}/edificio", json={"categoria": 3, "unidades_funcionales": 12,
                                                          "zona_desfavorable": True})
-    assert r.json == {"empresa_id": e, "categoria": 3, "unidades_funcionales": 12, "zona_desfavorable": True}
+    assert r.json == {"empresa_id": e, "categoria": 3, "unidades_funcionales": 12, "zona_desfavorable": True,
+                      "zona_base": "remunerativo", "zona_recibo_aparte": False}
+    r = client.put(f"/api/empresas/{e}/edificio", json={"categoria": 3, "zona_base": "todo"})
+    assert r.status_code == 400 and "zona_base" in r.json["error"]
+
+
+def test_zona_fria_en_recibo_aparte(client):
+    """Mismo caso que el recibo real de vigilancia nocturna, liquidado desde la web."""
+    e = consorcio(client, categoria="3", zona_desfavorable="1", zona_base="remunerativo", zona_recibo_aparte="1")
+    encargado(client, e, categoria="Personal Vigilancia Nocturna", fecha_ingreso="2015-09-01", afiliado="0",
+              retira_residuos="0", fecha_egreso="2026-09-30")
+    r = client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": "2026-09"},
+                    follow_redirects=True)
+    assert "Listo: 1 recibos de 2026-09, más 1 de zona fría aparte." in r.text and "1.320.544,00" in r.text
+    zona = client.get(f"/empresas/{e}/liquidaciones/2026-09?tipo=zona_fria").text
+    assert "Zona fría 2026-09" in zona and "660.272,00" in zona
+    pdf = PdfReader(BytesIO(client.get(f"/api/empresas/{e}/recibos/2026-09.pdf?tipo=zona_fria").data))
+    assert "zona fría" in pdf.pages[0].extract_text()
+    assert "Zona fría" in client.get(f"/empresas/{e}").text
+    assert client.get("/").status_code == 200
+
+    # La zona del recibo aparte cuenta para el aguinaldo como haber del mes.
+    r = client.post(f"/api/empresas/{e}/sac", json={**PAGO, "periodo": "2026-09"})
+    sac = client.get(f"/liquidaciones/{r.json['liquidaciones'][0]['id']}").text
+    assert "2.468.305,95" in sac  # 1.645.537,30 + 822.768,65
+
+    # Si el consorcio pasa la zona al mismo recibo, el recibo aparte se borra al reliquidar.
+    client.post(f"/empresas/{e}/edificio", data={"categoria": "3", "zona_desfavorable": "1"})
+    client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": "2026-09"})
+    assert client.get(f"/api/empresas/{e}/recibos/2026-09.pdf?tipo=zona_fria").status_code == 404
 
 
 def test_aguinaldo_de_encargado(client):

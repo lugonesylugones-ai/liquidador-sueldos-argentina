@@ -168,7 +168,9 @@ def liquidar(empresa_id: int):
         return redirect(url_for("web.liquidar_form", empresa_id=empresa_id, tipo=tipo,
                                 periodo=form.get("periodo") or None))
     if hechas:
-        flash(f"Listo: {len(hechas)} recibos de {_titulo(tipo, periodo)}.", "ok")
+        zona = sum(1 for h in hechas if "neto_zona_fria" in h)
+        flash(f"Listo: {len(hechas)} recibos de {_titulo(tipo, periodo)}"
+              + (f", más {zona} de zona fría aparte." if zona else "."), "ok")
     for e in errores:
         flash(f"{e['empleado']}: {e['error']}", "error")
     if not hechas:
@@ -180,7 +182,7 @@ def liquidar(empresa_id: int):
 CAMPOS_POR_EMPLEADO = {"inasistencias": "inasistencias_injustificadas", "horas_50": "horas_50",
                        "horas_100": "horas_100"}
 
-TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales"}
+TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales", "zona_fria": "Zona fría"}
 
 
 def _titulo(tipo: str, periodo: str) -> str:

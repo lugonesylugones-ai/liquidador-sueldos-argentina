@@ -86,7 +86,7 @@ def _filas_periodo(liq: Liquidacion, normal) -> list:
              ""],
         ]
     return [
-        [Paragraph(f"<b>Período:</b> {_periodo_texto(liq.periodo)} · mensual", normal),
+        [Paragraph(f"<b>Período:</b> {_periodo_texto(liq.periodo)} · {'zona fría' if liq.tipo == 'zona_fria' else 'mensual'}", normal),
          Paragraph(f"<b>Días trabajados:</b> {liq.dias_trabajados}", normal)],
         [Paragraph(f"<b>Básico de escala:</b> $ {pesos(liq.basico_escala)} "
                    f"(vigente desde {_f(liq.vigencia_escala)})", normal),

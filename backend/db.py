@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS edificios (
     empresa_id INTEGER PRIMARY KEY REFERENCES empresas(id),
     categoria INTEGER NOT NULL CHECK (categoria BETWEEN 1 AND 4),   -- art. 6, por servicios centrales
     unidades_funcionales INTEGER NOT NULL DEFAULT 0 CHECK (unidades_funcionales >= 0),
-    zona_desfavorable INTEGER NOT NULL DEFAULT 0
+    zona_desfavorable INTEGER NOT NULL DEFAULT 0,
+    -- Base de la zona fría: 'remunerativo' (todo) o 'basico_antiguedad'; y si va en recibo aparte.
+    zona_base TEXT NOT NULL DEFAULT 'remunerativo' CHECK (zona_base IN ('remunerativo', 'basico_antiguedad')),
+    zona_recibo_aparte INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS escalas (
@@ -67,7 +70,7 @@ CREATE TABLE IF NOT EXISTS liquidaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empleado_id INTEGER NOT NULL REFERENCES empleados(id),
     periodo TEXT NOT NULL,            -- YYYY-MM (para SAC, el mes de pago)
-    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac', 'final')),
+    tipo TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo IN ('mensual', 'sac', 'final', 'zona_fria')),
     fecha_pago TEXT NOT NULL,
     lugar_pago TEXT NOT NULL,
     resultado TEXT NOT NULL,          -- JSON con conceptos y totales
@@ -88,7 +91,18 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     _migrar_tipo_final(conn)
     _migrar_extras(conn)
+    _migrar_zona(conn)
     conn.commit()
+
+
+def _migrar_zona(conn: sqlite3.Connection) -> None:
+    """Bases creadas antes de la zona fría: agrega su base y si va en recibo aparte."""
+    columnas = {r["name"] for r in conn.execute("PRAGMA table_info(edificios)")}
+    if "zona_base" not in columnas:
+        conn.execute("ALTER TABLE edificios ADD COLUMN zona_base TEXT NOT NULL DEFAULT 'remunerativo' "
+                     "CHECK (zona_base IN ('remunerativo', 'basico_antiguedad'))")
+    if "zona_recibo_aparte" not in columnas:
+        conn.execute("ALTER TABLE edificios ADD COLUMN zona_recibo_aparte INTEGER NOT NULL DEFAULT 0")
 
 
 def _migrar_extras(conn: sqlite3.Connection) -> None:
@@ -99,10 +113,10 @@ def _migrar_extras(conn: sqlite3.Connection) -> None:
 
 
 def _migrar_tipo_final(conn: sqlite3.Connection) -> None:
-    """Bases creadas antes de la liquidación final: amplía el CHECK de liquidaciones.tipo."""
+    """Bases viejas: amplía el CHECK de liquidaciones.tipo (liquidación final, zona fría)."""
     sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'liquidaciones'"
                        ).fetchone()[0]
-    if "'final'" in sql:
+    if "'zona_fria'" in sql:
         return
     nueva = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS liquidaciones"):].split(";")[0]
     conn.execute("PRAGMA foreign_keys = OFF")

@@ -11,8 +11,8 @@ from io import BytesIO
 
 from .calculo import (CAUSAS_EGRESO, Liquidacion, dias_del_mes, liquidar_comercio, liquidar_final,
                       liquidar_sac, primer_dia, semestre_de, ultimo_dia)
-from .calculo_suteryh import (CARGO_POR_NOMBRE, CONVENIO_SUTERYH, TAREAS, ADICIONALES, fila_basico,
-                              liquidar_sac_suteryh, liquidar_suteryh, nombres_escala)
+from .calculo_suteryh import (ADICIONALES, BASES_ZONA, CARGO_POR_NOMBRE, CONVENIO_SUTERYH, TAREAS, fila_basico,
+                              liquidar_sac_suteryh, liquidar_suteryh, liquidar_zona_fria, nombres_escala)
 from .cuit import normalizar_cuit
 from .empleados import leer_empleados, validar_categoria
 from .escalas import CONVENIO_COMERCIO, basico_vigente, guardar_escala, leer_plantilla
@@ -123,11 +123,18 @@ def extras(emp) -> dict:
 
 def edificio(conn, empresa_id: int) -> dict | None:
     r = conn.execute("SELECT * FROM edificios WHERE empresa_id = ?", (empresa_id,)).fetchone()
-    return {**dict(r), "zona_desfavorable": bool(r["zona_desfavorable"])} if r else None
+    if r is None:
+        return None
+    return {**dict(r), "zona_desfavorable": bool(r["zona_desfavorable"]),
+            "zona_recibo_aparte": bool(r["zona_recibo_aparte"])}
 
 
 def guardar_edificio(conn, empresa_id: int, d: dict) -> None:
-    """Categoría (1 a 4), unidades funcionales y zona desfavorable del consorcio."""
+    """Categoría (1 a 4), unidades funcionales y zona fría / desfavorable del consorcio.
+
+    `zona_base`: 'remunerativo' (todo lo remunerativo) o 'basico_antiguedad'.
+    `zona_recibo_aparte`: la zona va en un recibo propio, con sus aportes y su redondeo.
+    """
     if empresa(conn, empresa_id) is None:
         raise ErrorDatos("La empresa no existe")
     categoria = entero(d, "categoria", 0)
@@ -136,13 +143,19 @@ def guardar_edificio(conn, empresa_id: int, d: dict) -> None:
     uf = entero(d, "unidades_funcionales", 0)
     if uf < 0:
         raise ErrorDatos("Las unidades funcionales no pueden ser negativas")
+    zona_base = d.get("zona_base") or "remunerativo"
+    if zona_base not in BASES_ZONA:
+        raise ErrorDatos(f"'zona_base' tiene que ser {' o '.join(BASES_ZONA)}")
     conn.execute(
-        """INSERT INTO edificios (empresa_id, categoria, unidades_funcionales, zona_desfavorable)
-           VALUES (?, ?, ?, ?)
+        """INSERT INTO edificios (empresa_id, categoria, unidades_funcionales, zona_desfavorable, zona_base,
+                                 zona_recibo_aparte)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT (empresa_id) DO UPDATE SET categoria = excluded.categoria,
              unidades_funcionales = excluded.unidades_funcionales,
-             zona_desfavorable = excluded.zona_desfavorable""",
-        (empresa_id, categoria, uf, int(si_no(d, "zona_desfavorable", False))))
+             zona_desfavorable = excluded.zona_desfavorable, zona_base = excluded.zona_base,
+             zona_recibo_aparte = excluded.zona_recibo_aparte""",
+        (empresa_id, categoria, uf, int(si_no(d, "zona_desfavorable", False)), zona_base,
+         int(si_no(d, "zona_recibo_aparte", False))))
     conn.commit()
 
 
@@ -408,13 +421,45 @@ def _mensual_suteryh(conn, emp, periodo_: str, d: dict, ingreso: date, dias: int
             periodo=periodo_, cargo=emp["categoria"], categoria_edificio=ed["categoria"], basico=fila.monto,
             adicionales=adicionales, vigencia_escala=fila.vigencia_desde, fecha_ingreso=ingreso, dias=dias,
             unidades_funcionales=ed["unidades_funcionales"] if ex["retira_residuos"] else 0,
-            tareas=ex["tareas"], tramos_titulo=ex["tramos_titulo"], zona_desfavorable=ed["zona_desfavorable"],
+            tareas=ex["tareas"], tramos_titulo=ex["tramos_titulo"],
+            zona_desfavorable=ed["zona_desfavorable"] and not ed["zona_recibo_aparte"], zona_base=ed["zona_base"],
             horas_50=decimal_opcional(d, "horas_50") or Decimal("0"),
             horas_100=decimal_opcional(d, "horas_100") or Decimal("0"),
             afiliado=ex["afiliado"], alicuota_sindical=decimal_opcional(d, "alicuota_sindical"),
             tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
     except ValueError as exc:
         raise ErrorDatos(str(exc))
+
+
+def _zona_fria_aparte(conn, emp, mensual: Liquidacion, d: dict) -> Liquidacion | None:
+    """Recibo aparte de zona fría para el sueldo de un encargado, si el consorcio lo liquida así."""
+    if emp["convenio"] != CONVENIO_SUTERYH or mensual.tipo != "mensual":
+        return None
+    ed = edificio(conn, emp["empresa_id"])
+    if not (ed and ed["zona_desfavorable"] and ed["zona_recibo_aparte"]):
+        return None
+    pct = basico_vigente(conn, ADICIONALES["zona_desfavorable_pct"], primer_dia(mensual.periodo), CONVENIO_SUTERYH)
+    if pct is None:
+        raise ErrorDatos(f"No hay porcentaje de zona desfavorable en la escala vigente en {mensual.periodo}")
+    liq = liquidar_zona_fria(mensual, porcentaje=pct.monto, zona_base=ed["zona_base"],
+                             afiliado=extras(emp)["afiliado"],
+                             alicuota_sindical=decimal_opcional(d, "alicuota_sindical"),
+                             tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+    liq.tipo = "zona_fria"
+    return liq
+
+
+def _guardar_mes(conn, emp, liq: Liquidacion, pago: dict, d: dict) -> tuple[int, Liquidacion | None]:
+    """Guarda la liquidación y, si corresponde, el recibo aparte de zona fría del mismo mes."""
+    zona = _zona_fria_aparte(conn, emp, liq, d)
+    liq_id = _guardar_liquidacion(conn, emp, liq, pago)
+    if liq.tipo == "mensual":
+        if zona is not None:
+            _guardar_liquidacion(conn, emp, zona, pago)
+        else:  # el consorcio dejó de liquidarla aparte: no queda un recibo viejo colgado
+            conn.execute("DELETE FROM liquidaciones WHERE empleado_id = ? AND periodo = ? AND tipo = 'zona_fria'",
+                         (emp["id"], liq.periodo))
+    return liq_id, zona
 
 
 def _escala_del_mes(conn, emp, periodo_: str, d: dict):
@@ -437,10 +482,17 @@ def _final_entre(conn, empleado_id: int, desde: str, hasta: str):
 
 
 def _historial(conn, empleado_id: int) -> list:
+    """Sueldos mensuales del empleado. La zona fría liquidada en recibo aparte se suma a la
+    remuneración de su mes (cuenta para el SAC como cualquier haber remunerativo)."""
     rows = conn.execute(
-        "SELECT resultado FROM liquidaciones WHERE empleado_id = ? AND tipo = 'mensual'",
+        "SELECT tipo, resultado FROM liquidaciones WHERE empleado_id = ? AND tipo IN ('mensual', 'zona_fria')",
         (empleado_id,)).fetchall()
-    return [Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"]) for r in rows]
+    liqs = [(r["tipo"], Liquidacion.from_dict(json.loads(r["resultado"])["liquidacion"])) for r in rows]
+    meses = {l.periodo: l for t, l in liqs if t == "mensual"}
+    for t, zona in liqs:
+        if t == "zona_fria" and zona.periodo in meses:
+            meses[zona.periodo].total_remunerativo += zona.total_remunerativo
+    return list(meses.values())
 
 
 def liquidar_aguinaldo(conn, emp, periodo_: str, d: dict) -> Liquidacion:
@@ -557,7 +609,7 @@ def liquidar_uno(conn, tipo: str, d: dict) -> tuple[int, Liquidacion]:
         raise ErrorDatos("El empleado no existe")
     pago = datos_pago(d, empresa(conn, emp["empresa_id"]))
     liq = FUNCIONES[tipo](conn, emp, periodo(d), d)
-    liq_id = _guardar_liquidacion(conn, emp, liq, pago)
+    liq_id, _ = _guardar_mes(conn, emp, liq, pago, d)
     conn.commit()
     return liq_id, liq
 
@@ -590,14 +642,16 @@ def liquidar_empresa(conn, empresa_id: int, tipo: str, d: dict,
     hechas, errores = [], []
     for emp in empleados_del_periodo(conn, empresa_id, tipo, periodo_):
         nombre = f"{emp['apellido']}, {emp['nombre']}"
+        datos = {**d, **(por_empleado or {}).get(emp["id"], {})}
         try:
-            liq = FUNCIONES[tipo](conn, emp, periodo_, {**d, **(por_empleado or {}).get(emp["id"], {})})
+            liq = FUNCIONES[tipo](conn, emp, periodo_, datos)
+            liq_id, zona = _guardar_mes(conn, emp, liq, pago, datos)
         except ErrorDatos as exc:
             errores.append({"empleado_id": emp["id"], "legajo": emp["legajo"], "empleado": nombre,
                             "error": str(exc)})
             continue
-        hechas.append({"id": _guardar_liquidacion(conn, emp, liq, pago), "empleado_id": emp["id"],
-                       "legajo": emp["legajo"], "empleado": nombre, "neto": str(liq.neto)})
+        hechas.append({"id": liq_id, "empleado_id": emp["id"], "legajo": emp["legajo"], "empleado": nombre,
+                       "neto": str(liq.neto), **({"neto_zona_fria": str(zona.neto)} if zona else {})})
     conn.commit()
     return periodo_, hechas, errores
 
@@ -654,10 +708,12 @@ def resumen_general(conn) -> dict:
     r = conn.execute("""SELECT (SELECT COUNT(*) FROM empresas) AS empresas,
                                (SELECT COUNT(*) FROM empleados WHERE fecha_egreso IS NULL) AS activos""").fetchone()
     ultimo = conn.execute("SELECT MAX(periodo) FROM liquidaciones WHERE tipo = 'mensual'").fetchone()[0]
+    # El neto del mes incluye la zona fría que se paga en recibo aparte.
     neto = Decimal("0")
     recibos = 0
     if ultimo:
-        for f in conn.execute("SELECT resultado FROM liquidaciones WHERE tipo = 'mensual' AND periodo = ?", (ultimo,)):
+        for f in conn.execute("SELECT resultado FROM liquidaciones WHERE tipo IN ('mensual', 'zona_fria') "
+                              "AND periodo = ?", (ultimo,)):
             neto += Decimal(json.loads(f["resultado"])["liquidacion"]["neto"])
             recibos += 1
     return {"empresas": r["empresas"], "activos": r["activos"], "ultimo_periodo": ultimo,

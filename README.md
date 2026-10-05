@@ -3,7 +3,7 @@ Programa para liquidar sueldos de empleados de comercio, gastronomía y encargad
 
 **Estado:** maneja varias empresas, cada una con sus empleados y cada empleado con su convenio.
 Liquida Comercio (CCT 130/75: sueldo, aguinaldo y liquidación final) y encargados de edificio
-(CCT 589/10: sueldo y aguinaldo, **sin validar todavía contra un recibo real**).
+(CCT 589/10: sueldo, zona fría y aguinaldo, validado contra recibos reales de septiembre 2026).
 
 ## Cómo correrlo
 
@@ -42,7 +42,7 @@ Con el servidor andando, entrá a http://127.0.0.1:5000:
    pueden asignar y cargar escalas, pero no se liquidan hasta programar sus reglas.
 8. **Consorcios (encargados de edificio)**: cada consorcio es una empresa. Al cargar un empleado
    con el convenio CCT 589/10 aparece la sección "Edificio" (categoría 1 a 4, unidades funcionales,
-   zona desfavorable) y en el empleado se marcan afiliación, retiro de residuos, tareas y título.
+   zona fría con su base y si va en recibo aparte) y en el empleado se marcan afiliación, retiro de residuos, tareas y título.
    Al liquidar se cargan las horas extra de cada uno.
 
 Está pensado para usarlo en tu propia compu: no tiene usuarios ni contraseña, así que
@@ -125,20 +125,23 @@ neto en números y letras, lugar y fecha de pago y constancia de recepción del 
 
 ## Qué calcula (encargados de edificio, CCT 589/10)
 
-Nada de esta sección está contrastado con un recibo real. Escalas jul-sep 2026 de las planillas
-de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcadas sin verificar.
+Validado al centavo contra recibos reales de septiembre 2026 de consorcios de Bahía Blanca
+(11 de 15; las otras diferencias están explicadas en el PR #3). Escalas jul-sep 2026 de las
+planillas de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcadas sin verificar.
 
 | Concepto | Regla |
 |---|---|
 | Básico | Escala del cargo según la categoría del edificio (art. 6) |
-| Adicional remuneratorio | El de la planilla; 50% en cargos de media jornada (a verificar) |
-| Antigüedad | Monto fijo por año: 2% del ayudante sin vivienda de 4ª; 1% en media jornada (art. 11) |
-| Vivienda | Remunerativa (art. 15); se descuenta igual importe porque es en especie (a verificar) |
-| Residuos, tareas, título, zona | Retiro por UF, plus por tarea fijos, título 5% por tramo (a verificar), zona 50% |
-| Horas extra | 50% y 100% sobre remuneración habitual / 200 (divisor a verificar) |
-| Aportes | Jubilación 11%, PAMI 3%, obra social 3%, Caja Protección Familia 1%, FMVDD 1%, seguro art. 27 bis 0,75%, cuota sindical 2% solo afiliados (alícuota local a verificar) |
-| Contribuciones del convenio | Se muestran aparte (no van en el recibo): CPF 1,5%, FMVDD 4%, seguro 0,75%, SERACARH 0,5% |
-| SAC | Régimen general con los aportes del convenio, sin descontar vivienda |
+| Suma fija remunerativa | La de la planilla; 50% en jornada reducida (media jornada y encargado no permanente) |
+| Antigüedad | Monto fijo por año: 2% del ayudante sin vivienda de 4ª; la mitad en jornada reducida (art. 11) |
+| Vivienda | No se liquida (los recibos no la traen); queda como opción del motor |
+| Residuos, tareas, título | Retiro por UF, plus por tarea fijos, título 5% por tramo |
+| Horas extra | 50% y 100%; valor hora = (básico + antigüedad + residuos + tareas, sin suma fija ni viáticos) / 200, o / 100 en jornada reducida |
+| Zona fría | 50%, por consorcio: sobre todo lo remunerativo o sobre básico + antigüedad, en el mismo recibo o en un recibo aparte con sus propios aportes y redondeo. La del recibo aparte cuenta para el SAC (inferido) |
+| Aportes | Jubilación 11%, PAMI 3%, obra social 3%, Caja Protección Familia 1%, FMVDD 1%, seguro art. 27 bis 0,75%, cuota sindical 2% solo afiliados |
+| Redondeo | El neto se redondea para arriba al peso |
+| Contribuciones del convenio | Se muestran aparte (no van en el recibo): CAPAF 4%, FMVDD 1,5%, seguro 0,75%, SERACARH 0,5% |
+| SAC | Régimen general con los aportes del convenio |
 | Sin hacer | Liquidación final (vacaciones en días hábiles), faltas, suplentes y jornalizados |
 
 ## Pendiente
@@ -146,7 +149,7 @@ de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcadas sin veri
 - Horas extra, vacaciones, licencias y feriados (Día del Empleado de Comercio).
 - Contribuciones patronales y costo empleador.
 - Liquidación final: validar contra un recibo real (hoy sigue la LCT, no se contrastó con un caso real).
-- Encargados de edificio: validar contra un recibo real y su F.931; liquidación final.
+- Encargados de edificio: liquidación final; validar el aguinaldo contra un recibo real.
 - Motor de cálculo para otros convenios (gastronómicos, etc.).
 - Retención de ganancias.
 - Lectura de escalas directamente desde el PDF de FAECYS.

@@ -21,7 +21,7 @@
   <div class="tabla" style="margin-top:1rem"><table>
     <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th></tr>
     {% for l in liquidaciones %}
-    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
+    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
             <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>
@@ -44,8 +44,16 @@
         <option value="{{ c }}"{% if ed.categoria == c %} selected{% endif %}>{{ txt }}</option>{% endfor %}
       </select></label>
       <label>Unidades funcionales <input type="number" name="unidades_funcionales" min="0" value="{{ ed.unidades_funcionales or 0 }}"></label>
-      <label>Zona desfavorable <select name="zona_desfavorable">
+      <label>Zona fría / desfavorable <select name="zona_desfavorable">
         <option value="0">No</option><option value="1"{% if ed.zona_desfavorable %} selected{% endif %}>Sí (50%)</option>
+      </select></label>
+      <label>Zona sobre <select name="zona_base">
+        <option value="remunerativo">Todo lo remunerativo</option>
+        <option value="basico_antiguedad"{% if ed.zona_base == 'basico_antiguedad' %} selected{% endif %}>Básico + antigüedad</option>
+      </select></label>
+      <label>Zona en <select name="zona_recibo_aparte">
+        <option value="0">El mismo recibo</option>
+        <option value="1"{% if ed.zona_recibo_aparte %} selected{% endif %}>Un recibo aparte</option>
       </select></label>
     </div>
     <div class="acciones"><button>Guardar edificio</button>
