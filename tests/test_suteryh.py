@@ -1,7 +1,7 @@
 """Encargados de edificio (CCT 589/10): motor, escalas y flujo web.
 
-Casos calculados a mano sobre la planilla de SUTERH de septiembre 2026, con datos
-inventados. Ninguno está contrastado con un recibo real todavía.
+Casos sobre la planilla de SUTERH de septiembre 2026. Los marcados "recibo real"
+reproducen al centavo recibos de consorcios de Bahía Blanca, sin datos personales.
 """
 import json
 import re
@@ -18,7 +18,7 @@ from pypdf import PdfReader
 from backend import db as dbmod
 from backend.app import create_app
 from backend.calculo_suteryh import (ADICIONALES, CATEGORIAS_SUTERYH, liquidar_sac_suteryh, liquidar_suteryh,
-                                     nombres_escala)
+                                     liquidar_zona_fria, nombres_escala)
 from backend.escalas import generar_plantilla
 
 PLANILLA = json.loads((Path(__file__).parent.parent / "backend" / "datos" /
@@ -44,18 +44,75 @@ def importes(liq):
 
 
 # --- Motor -----------------------------------------------------------------------
-def test_encargado_con_vivienda_completo():
-    liq = liquidar("2026-09", "encargado_permanente_cv", 2, 10, unidades_funcionales=20)
+# Los casos con "recibo real" reproducen al centavo recibos de septiembre 2026 de
+# consorcios de Bahía Blanca, con los datos personales sacados (quedan fuera del repo).
+
+def test_vigilancia_nocturna_no_afiliado_y_zona_fria_aparte():
+    """Recibo real: vigilancia nocturna, 11 años, sin cuota sindical; zona fría en recibo aparte."""
+    liq = liquidar("2026-09", "vigilancia_nocturna", 3, 11, afiliado=False)
     assert importes(liq) == {
-        "BAS": D("1214974.00"), "ADR": D("85000.00"), "ANT": D("242103.00"), "VIV": D("8703.10"),
-        "RES": D("47380.00"), "JUB": D("175797.61"), "PAMI": D("47944.80"), "OS": D("47944.80"),
-        "CPF": D("15981.60"), "FMVDD": D("15981.60"), "A27B": D("11986.20"), "SIND": D("31963.20"),
-        "VIVE": D("8703.10")}
-    assert liq.total_remunerativo == D("1598160.10")
-    assert liq.neto == D("1241857.19")
-    assert liq.categoria == "Encargado Permanente con vivienda · 2ª categoría"
+        "BAS": D("1294224.00"), "ANT": D("266313.30"), "ADR": D("85000.00"), "JUB": D("181009.10"),
+        "PAMI": D("49366.12"), "OS": D("49366.12"), "CPF": D("16455.37"), "FMVDD": D("16455.37"),
+        "A27B": D("12341.53"), "RED": D("0.31")}
+    assert liq.total_remunerativo == D("1645537.30") and liq.neto == D("1320544")
+    # Contribuciones del convenio del recibo: CAPAF 4%, FMVDD 1,5%, art. 27 bis 0,75%, SERACARH 0,5%.
     assert {c.codigo: c.importe for c in liq.informativos} == {
-        "C_CPF": D("23972.40"), "C_FMVDD": D("63926.40"), "C_A27B": D("11986.20"), "C_SERACARH": D("7990.80")}
+        "C_CPF": D("65821.49"), "C_FMVDD": D("24683.06"), "C_A27B": D("12341.53"), "C_SERACARH": D("8227.69")}
+
+    zona = liquidar_zona_fria(liq, porcentaje=D("50"), afiliado=False)
+    assert importes(zona) == {
+        "ZONA": D("822768.65"), "JUB": D("90504.55"), "PAMI": D("24683.06"), "OS": D("24683.06"),
+        "CPF": D("8227.69"), "FMVDD": D("8227.69"), "A27B": D("6170.76"), "RED": D("0.16")}
+    assert zona.neto == D("660272")
+
+
+def test_encargado_permanente_con_residuos_y_tareas():
+    """Recibo real: encargado sin vivienda, 3ª categoría, 19 años, 38 UF, cocheras, jardín y viáticos."""
+    liq = liquidar("2026-09", "encargado_permanente_sv", 3, 19, unidades_funcionales=38,
+                   tareas=("limpieza_cocheras", "jardin", "viaticos"))
+    assert importes(liq) == {
+        "BAS": D("1331567.00"), "ADR": D("85000.00"), "ANT": D("459995.70"), "RES": D("90022.00"),
+        "COCH": D("32328.60"), "JARD": D("32328.60"), "VIAT": D("90035.30"), "JUB": D("233340.49"),
+        "PAMI": D("63638.32"), "OS": D("63638.32"), "CPF": D("21212.77"), "FMVDD": D("21212.77"),
+        "A27B": D("15909.58"), "SIND": D("42425.54"), "RED": D("0.59")}
+    assert liq.total_remunerativo == D("2121277.20")
+    # Zona fría de ese consorcio: 50% de básico + antigüedad, en recibo aparte.
+    zona = liquidar_zona_fria(liq, porcentaje=D("50"), zona_base="basico_antiguedad")
+    assert importes(zona)["ZONA"] == D("895781.35") and zona.neto == D("700949")
+
+
+def test_horas_extra_al_100_sin_viaticos_ni_suma_fija():
+    """Recibo real: 6 hs al 100%, valor hora = (básico + antig. + residuos + cocheras + jardín) / 200."""
+    liq = liquidar("2026-09", "encargado_permanente_sv", 4, 9, unidades_funcionales=42, horas_100=6,
+                   tareas=("limpieza_cocheras", "jardin", "viaticos"))
+    i = importes(liq)
+    assert i["HE100"] == D("95553.77")
+    assert liq.total_remunerativo == D("1863151.97") and liq.neto == D("1457917")
+
+
+def test_horas_extra_al_50():
+    liq = liquidar("2026-09", "encargado_permanente_sv", 4, 0, horas_50=10, horas_100=4)
+    # valor hora = 1.210.515 / 200 = 6.052,575 (la suma fija no entra)
+    assert importes(liq)["HE50"] == D("90788.63")
+    assert importes(liq)["HE100"] == D("48420.60")
+
+
+def test_encargado_no_permanente_jornada_reducida():
+    """Recibo real: no permanente sin vivienda, 9 años: mitad de suma fija y antigüedad al 1% exacto."""
+    liq = liquidar("2026-09", "encargado_no_permanente_sv", 1, 9, unidades_funcionales=17,
+                   tareas=("limpieza_cocheras", "viaticos"))
+    i = importes(liq)
+    assert (i["BAS"], i["ADR"], i["ANT"], i["RES"]) == (D("761130.00"), D("42500.00"), D("108946.35"),
+                                                      D("40273.00"))
+    assert liq.total_remunerativo == D("1075213.25") and liq.neto == D("841355")
+    assert liq.jornada_horas == 4
+    zona = liquidar_zona_fria(liq, porcentaje=D("50"), zona_base="basico_antiguedad")
+    assert importes(zona)["ZONA"] == D("435038.18") and zona.neto == D("340418")
+
+
+def test_horas_extra_jornada_reducida_divisor_100():
+    liq = liquidar("2026-09", "encargado_no_permanente_cv", 1, 0, horas_100=8)
+    assert importes(liq)["HE100"] == D("114349.76")  # 714.686 / 100 × 2 × 8
 
 
 def test_no_afiliado_no_paga_cuota_sindical():
@@ -63,7 +120,7 @@ def test_no_afiliado_no_paga_cuota_sindical():
     assert "SIND" not in importes(liq) and "VIV" not in importes(liq)
     assert liq.total_remunerativo == D("1537618.00")
     assert liq.total_descuentos == D("303679.56")
-    assert liq.neto == D("1233938.44")
+    assert liq.neto == D("1233939")
 
 
 def test_alicuota_sindical_local():
@@ -74,31 +131,28 @@ def test_alicuota_sindical_local():
 def test_media_jornada_antiguedad_1pct_y_mitad_de_adicional():
     liq = liquidar("2026-09", "ayudante_media_jornada", 3, 5)
     i = importes(liq)
-    assert (i["BAS"], i["ADR"], i["ANT"]) == (D("665783.00"), D("42500.00"), D("60526.00"))
+    assert (i["BAS"], i["ADR"], i["ANT"]) == (D("665783.00"), D("42500.00"), D("60525.75"))
     assert liq.jornada_horas == 4
 
 
-def test_mes_incompleto_proporciona_basico_adicional_y_vivienda():
-    liq = liquidar("2026-09", "encargado_permanente_cv", 1, 0, dias=15)
+def test_vivienda_solo_si_se_pide():
+    """Los recibos reales no liquidan vivienda ni en cargos "con vivienda"; el art. 15 queda como opción."""
+    assert "VIV" not in importes(liquidar("2026-09", "encargado_permanente_cv", 1, 0))
+    liq = liquidar("2026-09", "encargado_permanente_cv", 1, 0, dias=15, liquidar_vivienda=True)
     i = importes(liq)
-    assert (i["BAS"], i["ADR"], i["VIV"]) == (D("633899.50"), D("42500.00"), D("4351.55"))
+    assert (i["BAS"], i["ADR"], i["VIV"], i["VIVE"]) == (D("633899.50"), D("42500.00"), D("4351.55"),
+                                                         D("4351.55"))
 
 
-def test_horas_extra_sobre_divisor_200():
-    liq = liquidar("2026-09", "encargado_permanente_sv", 4, 0, horas_50=10, horas_100=4)
-    # valor hora = (1.210.515 + 85.000) / 200 = 6.477,575
-    assert importes(liq)["HE50"] == D("97163.63")
-    assert importes(liq)["HE100"] == D("51820.60")
-
-
-def test_titulo_tareas_y_zona():
+def test_titulo_tareas_y_zona_en_el_mismo_recibo():
     liq = liquidar("2026-09", "encargado_permanente_sv", 1, 0, tramos_titulo=2,
                    tareas=("jardin", "limpieza_piletas", "limpieza_cocheras"))
     i = importes(liq)
     assert i["TIT"] == D("145261.80")  # 10% de 1.452.618
     assert (i["JARD"], i["PILE"], i["COCH"]) == (D("32328.60"), D("54384.60"), D("32328.60"))
-    zona = liquidar("2026-09", "encargado_permanente_sv", 1, 0, zona_desfavorable=True)
-    assert importes(zona)["ZONA"] == D("768809.00")  # 50% de 1.537.618
+    zona = liquidar("2026-09", "encargado_permanente_sv", 1, 0, zona_desfavorable=True, horas_50=10)
+    # 50% de todo lo remunerativo, horas extra incluidas: (1.452.618 + 85.000 + 108.946,35) / 2
+    assert importes(zona)["ZONA"] == D("823282.18")
 
 
 def test_errores_del_motor():
@@ -106,22 +160,24 @@ def test_errores_del_motor():
         liquidar("2026-09", "encargado_permanente_sv", 1, 0, tareas=("lavar autos",))
     with pytest.raises(ValueError, match="categoría del edificio"):
         liquidar("2026-09", "encargado_permanente_sv", 5, 0)
+    with pytest.raises(ValueError, match="base de zona"):
+        liquidar("2026-09", "encargado_permanente_sv", 1, 0, zona_base="todo")
     with pytest.raises(ValueError, match="falta en la escala: Valor vivienda"):
         liquidar_suteryh(periodo="2026-09", cargo="Encargado Permanente con vivienda", categoria_edificio=1,
                          basico=D(1), adicionales={"adicional_remuneratorio_mensual": D(1)},
-                         vigencia_escala=date(2026, 9, 1), fecha_ingreso=date(2026, 1, 1))
+                         vigencia_escala=date(2026, 9, 1), fecha_ingreso=date(2026, 1, 1), liquidar_vivienda=True)
 
 
-def test_sac_con_aportes_del_convenio_y_sin_vivienda_en_especie():
+def test_sac_con_aportes_del_convenio():
     meses = [liquidar(p, "encargado_permanente_cv", 2, 10, unidades_funcionales=20)
              for p in ("2026-07", "2026-08", "2026-09")]
     liq = liquidar_sac_suteryh(periodo="2026-09", categoria="Encargado Permanente con vivienda",
                                fecha_ingreso=date(2016, 9, 1), fecha_egreso=date(2026, 9, 30), historial=meses)
     i = importes(liq)
-    assert i["SAC"] == D("399540.03")  # 1.598.160,10 / 2 × 92/184
-    assert "VIVE" not in i and "RED" not in i
-    assert (i["JUB"], i["A27B"], i["SIND"]) == (D("43949.40"), D("2996.55"), D("7990.80"))
-    assert liq.neto == D("312640.08")
+    assert i["SAC"] == D("397364.25")  # 1.589.457 / 2 × 92/184
+    assert "VIVE" not in i
+    assert (i["JUB"], i["A27B"], i["SIND"]) == (D("43710.07"), D("2980.23"), D("7947.29"))
+    assert liq.neto == D("310938")
 
 
 @pytest.mark.parametrize("periodo", ["2026-07", "2026-08", "2026-09"])
@@ -185,18 +241,18 @@ def test_sueldo_de_encargado_desde_la_web(client):
     assert f'name="horas_50_{emp["id"]}"' in form and f'name="inasistencias_{emp["id"]}"' not in form
     r = client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": "2026-09"},
                     follow_redirects=True)
-    assert "Listo: 1 recibos" in r.text and "1.241.857,19" in r.text
+    assert "Listo: 1 recibos" in r.text and "1.243.751,00" in r.text
     liq_id = re.search(r'href="/liquidaciones/(\d+)"', r.text).group(1)
     detalle = client.get(f"/liquidaciones/{liq_id}").text
-    assert "Contribuciones del empleador del convenio" in detalle and "63.926,40" in detalle
+    assert "Contribuciones del empleador del convenio" in detalle and "63.578,28" in detalle
 
     # Con horas extra por empleado, y la pantalla del recibo muestra las contribuciones del convenio.
     r = client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": "2026-09",
                                                      f"horas_50_{emp['id']}": "10"}, follow_redirects=True)
-    assert "Listo: 1 recibos" in r.text and "1.241.857,19" not in r.text
+    assert "Listo: 1 recibos" in r.text and "1.243.751,00" not in r.text
     pdf = PdfReader(BytesIO(client.get(f"/api/empresas/{e}/recibos/2026-09.pdf").data))
     texto = "".join(p.extract_text() for p in pdf.pages)
-    assert "Horas extra 50%" in texto and "Vivienda (en especie)" in texto and "CCT 589/10" in texto
+    assert "Horas extra 50%" in texto and "Vivienda (en especie)" not in texto and "CCT 589/10" in texto
     assert client.get(f"/api/empresas/{e}/empleados").json[0]["jornada_horas"] == 8
 
 
@@ -245,7 +301,7 @@ def test_aguinaldo_de_encargado(client):
     for periodo in ("2026-07", "2026-08", "2026-09"):
         client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": periodo})
     r = client.post(f"/api/empresas/{e}/sac", json={**PAGO, "periodo": "2026-09"})
-    assert r.status_code == 201 and r.json["liquidaciones"][0]["neto"] == "312640.08"
+    assert r.status_code == 201 and r.json["liquidaciones"][0]["neto"] == "310938.00"
 
 
 def test_plantilla_de_escala_de_edificios(client):

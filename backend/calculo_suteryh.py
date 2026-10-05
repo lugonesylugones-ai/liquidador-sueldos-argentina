@@ -1,28 +1,32 @@
 """Motor de cálculo para trabajadores de edificios (CCT 589/10, FATERYH / SUTERYH).
 
-Ninguna regla está validada contra un recibo real todavía. Las que dependen de
-una interpretación están marcadas "VERIFICAR" y se pueden cambiar con un
-parámetro. La fuente de cada regla está en la especificación del hilo SUTERYH.
+Validado al centavo contra los recibos reales de septiembre 2026 de seis consorcios
+de Bahía Blanca (encargados permanentes y no permanentes, vigilancia nocturna).
+Lo que esos recibos no cubren sigue marcado "VERIFICAR".
 
 - Básico según cargo y categoría del edificio (art. 6: 1ra a 4ta según servicios centrales).
-- Adicional remuneratorio mensual de la planilla; 50% en cargos de media jornada (VERIFICAR).
+- Suma fija remunerativa de la planilla; 50% en jornada reducida (media jornada y
+  encargado no permanente), como en los recibos.
 - Antigüedad: monto fijo por año. 2% del básico de ayudante permanente sin vivienda
-  de 4ta; 1% para media jornada, suplentes y jornalizados (art. 11).
-- Valor vivienda: remunerativo (art. 15). Se imprime como haber y se descuenta igual
-  importe porque se paga en especie (VERIFICAR).
-- Plus por tareas, retiro de residuos por UF, título de encargado integral y zona desfavorable.
-- Horas extra al 50% y al 100%: valor hora = remuneración habitual / 200 (VERIFICAR divisor).
+  de 4ta; 1% (la mitad exacta) para jornada reducida (art. 11).
+- Valor vivienda: los recibos no lo liquidan, ni en los cargos "con vivienda". El
+  art. 15 dice que computa para aportes: queda como opción (`liquidar_vivienda`).
+- Plus por tareas, retiro de residuos por UF y título de encargado integral.
+- Horas extra al 50% y al 100%: valor hora = (básico + antigüedad + residuos + plus
+  por tarea, sin viáticos ni suma fija) / 200, o / 100 en jornada reducida.
+- Zona fría / desfavorable (50%): en el mismo recibo o en un recibo aparte
+  (`liquidar_zona_fria`), sobre todo lo remunerativo o sobre básico + antigüedad.
 - Aportes sobre el remunerativo: jubilación 11%, Ley 19.032 3%, obra social 3%,
   Caja de Protección a la Familia 1% (art. 19), FMVDD 1% (art. 27), seguro de vida
-  0,75% (art. 27 bis) y cuota sindical 2% solo a afiliados (VERIFICAR alícuota local).
-- El neto no se redondea (VERIFICAR).
-- Mes incompleto: básico, adicional y vivienda × días / 30.
+  0,75% (art. 27 bis) y cuota sindical 2% solo a afiliados.
+- Neto redondeado para arriba al peso entero ("Redondeo", no remunerativo).
+- Mes incompleto: básico, suma fija y vivienda × días / 30.
 
 Las contribuciones del empleador propias del convenio quedan en
 `Liquidacion.informativos`: van en las boletas sindicales, no en el recibo.
 """
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 
 from .calculo import (Concepto, Liquidacion, anios_cumplidos, liquidar_sac, redondear, ultimo_dia,
                       _pct)
@@ -33,7 +37,9 @@ DIAS_MES = Decimal("30")
 DIVISOR_HORA = Decimal("200")
 CATEGORIAS_EDIFICIO = (1, 2, 3, 4)
 
-# (clave, nombre, con vivienda, media jornada). El nombre es la categoría del empleado.
+# (clave, nombre, con vivienda, jornada reducida). El nombre es la categoría del empleado.
+# Jornada reducida: media jornada y encargado no permanente. Cobran la mitad de la suma
+# fija, antigüedad al 1% y horas extra con divisor 100 (recibos de septiembre 2026).
 CARGOS = [
     ("encargado_permanente_cv", "Encargado Permanente con vivienda", True, False),
     ("encargado_permanente_sv", "Encargado Permanente sin vivienda", False, False),
@@ -52,23 +58,20 @@ CARGOS = [
     ("vigilancia_nocturna", "Personal Vigilancia Nocturna", False, False),
     ("vigilancia_diurna", "Personal Vigilancia Diurna", False, False),
     ("vigilancia_media_jornada", "Personal Vigilancia Media Jornada", False, True),
-    ("encargado_no_permanente_cv", "Encargado No Permanente con vivienda", True, False),
-    ("encargado_no_permanente_sv", "Encargado No Permanente sin vivienda", False, False),
+    ("encargado_no_permanente_cv", "Encargado No Permanente con vivienda", True, True),
+    ("encargado_no_permanente_sv", "Encargado No Permanente sin vivienda", False, True),
     ("ayudante_temporario", "Ayudante Temporario", False, False),
     ("ayudante_temporario_media_jornada", "Ayudante Temporario Media Jornada", False, True),
 ]
 CARGO_POR_NOMBRE = {nombre: (clave, viv, media) for clave, nombre, viv, media in CARGOS}
 CATEGORIAS_SUTERYH = [nombre for _, nombre, _, _ in CARGOS]
 
-# Cargos que cobran la antigüedad al 1% (art. 11: media jornada, suplentes y jornalizados).
-CARGOS_ANTIGUEDAD_1PCT = {"ayudante_media_jornada", "vigilancia_media_jornada",
-                          "ayudante_temporario_media_jornada"}
 
 # Montos de la planilla que no dependen del cargo. Clave -> nombre en la escala.
 ADICIONALES = {
     "adicional_remuneratorio_mensual": "Adicional remuneratorio mensual",
     "plus_antiguedad_2pct": "Antigüedad por año (2%)",
-    "plus_antiguedad_1pct": "Antigüedad por año (1%)",
+    "plus_antiguedad_1pct": "Antigüedad por año (1%)",   # informativo: se usa la mitad del 2%
     "valor_vivienda": "Valor vivienda",
     "retiro_residuos_por_uf": "Retiro de residuos por UF",
     "clasificacion_residuos": "Clasificación de residuos",
@@ -102,13 +105,17 @@ APORTES = [
     ("SIND", "Cuota sindical", Decimal("0.02"), True, False),
 ]
 
-# Contribuciones del empleador del convenio (boletas sindicales). SERACARH: fuente de 2019.
+# Contribuciones del empleador del convenio (boletas sindicales), como en los recibos.
 CONTRIBUCIONES_CONVENIO = [
-    ("C_CPF", "Caja Protección Familia art. 19", Decimal("0.015")),
-    ("C_FMVDD", "FMVDD art. 27", Decimal("0.04")),
+    ("C_CPF", "Caja Protección Familia (CAPAF)", Decimal("0.04")),
+    ("C_FMVDD", "FMVDD", Decimal("0.015")),
     ("C_A27B", "Seguro de vida art. 27 bis", Decimal("0.0075")),
-    ("C_SERACARH", "SERACARH (VERIFICAR vigencia)", Decimal("0.005")),
+    ("C_SERACARH", "SERACARH", Decimal("0.005")),
 ]
+
+# Conceptos que no entran en el valor hora de las horas extra.
+FUERA_VALOR_HORA = {"ADR", "VIAT", "VIV", "ZONA"}
+BASES_ZONA = ("remunerativo", "basico_antiguedad")
 
 
 def fila_basico(cargo: str, categoria_edificio: int | str) -> str:
@@ -150,17 +157,21 @@ def liquidar_suteryh(
     horas_100: Decimal | int = 0,
     afiliado: bool = True,
     alicuota_sindical: Decimal | None = None,
+    liquidar_vivienda: bool = False,
     vivienda_en_especie: bool = True,
     factor_adicional: Decimal | None = None,
     tope_base_imponible: Decimal | None = None,
+    zona_base: str = "remunerativo",
 ) -> Liquidacion:
     """Un mes de un trabajador de edificio.
 
     `cargo`: nombre del cargo (ver CARGOS). `basico`: el de la escala para el cargo y
     la categoría del edificio. `adicionales`: {clave de ADICIONALES: monto} vigentes.
     `tramos_titulo`: tramos del título de encargado integral, 5% cada uno (art. 28;
-    la planilla dice 10%: VERIFICAR). `factor_adicional`: proporción del adicional
-    remuneratorio; por defecto 0,5 en media jornada y 1 en el resto (VERIFICAR).
+    2 tramos = 10%, lo que paga el recibo real). `factor_adicional`: proporción de la
+    suma fija; por defecto 0,5 en jornada reducida y 1 en el resto.
+    `zona_desfavorable`: suma la zona en este mismo recibo; para el recibo aparte, ver
+    `liquidar_zona_fria`. `zona_base`: "remunerativo" o "basico_antiguedad".
     """
     if cargo not in CARGO_POR_NOMBRE:
         raise ValueError(f"cargo desconocido: {cargo}")
@@ -170,16 +181,17 @@ def liquidar_suteryh(
         raise ValueError("los días a liquidar tienen que estar entre 1 y 30")
     if horas_50 < 0 or horas_100 < 0 or unidades_funcionales < 0 or tramos_titulo < 0:
         raise ValueError("horas extra, unidades funcionales y tramos no pueden ser negativos")
+    if zona_base not in BASES_ZONA:
+        raise ValueError(f"base de zona desconocida: {zona_base}")
     desconocidas = [t for t in tareas if t not in TAREAS]
     if desconocidas:
         raise ValueError(f"tarea desconocida: {', '.join(desconocidas)}")
-    clave, con_vivienda, media_jornada = CARGO_POR_NOMBRE[cargo]
-    clave_ant = "plus_antiguedad_1pct" if clave in CARGOS_ANTIGUEDAD_1PCT else "plus_antiguedad_2pct"
+    _, con_vivienda, media_jornada = CARGO_POR_NOMBRE[cargo]
     anios = anios_cumplidos(fecha_ingreso, ultimo_dia(periodo))
     necesarios = {"adicional_remuneratorio_mensual"}
     if anios:
-        necesarios.add(clave_ant)
-    if con_vivienda:
+        necesarios.add("plus_antiguedad_2pct")
+    if con_vivienda and liquidar_vivienda:
         necesarios.add("valor_vivienda")
     if unidades_funcionales:
         necesarios.add("retiro_residuos_por_uf")
@@ -210,10 +222,13 @@ def liquidar_suteryh(
              "remunerativo", monto * Decimal(factor_adicional) * prop)
 
     if anios:
-        _agregar(liq, "ANT", "Antigüedad", f"{anios} {'año' if anios == 1 else 'años'} × $ {pesos(adic[clave_ant])}",
-                 "remunerativo", adic[clave_ant] * anios)
+        # Jornada reducida: 1% = la mitad exacta del 2% (12.105,15 y no el 12.105,20 redondeado
+        # de la planilla), como los recibos.
+        por_anio = adic["plus_antiguedad_2pct"] / (2 if media_jornada else 1)
+        _agregar(liq, "ANT", "Antigüedad", f"{anios} {'año' if anios == 1 else 'años'} × $ {pesos(por_anio)}",
+                 "remunerativo", por_anio * anios)
 
-    if con_vivienda:
+    if con_vivienda and liquidar_vivienda:
         _agregar(liq, "VIV", "Valor vivienda", f"Art. 15 CCT 589/10{dias_txt}", "remunerativo",
                  adic["valor_vivienda"] * prop)
 
@@ -230,23 +245,57 @@ def liquidar_suteryh(
         _agregar(liq, "TIT", "Título encargado integral", f"{_pct(pct)} s/ $ {pesos(basico_mes)}",
                  "remunerativo", basico_mes * pct)
 
-    if zona_desfavorable:
-        base = _suma(liq, "remunerativo")
-        pct = adic["zona_desfavorable_pct"] / 100
-        _agregar(liq, "ZONA", "Plus zona desfavorable", f"{_pct(pct)} s/ $ {pesos(base)}", "remunerativo",
-                 base * pct)
-
     if horas_50 or horas_100:
-        habitual = _suma(liq, "remunerativo")
-        valor_hora = habitual / DIVISOR_HORA
-        hora_txt = f"$ {pesos(redondear(valor_hora))} (habitual / 200)"
+        habitual = sum((c.importe for c in liq.remunerativos() if c.codigo not in FUERA_VALOR_HORA), Decimal("0"))
+        divisor = DIVISOR_HORA / (2 if media_jornada else 1)
+        valor_hora = habitual / divisor
+        hora_txt = f"$ {pesos(redondear(valor_hora))} (habitual / {divisor})"
         _agregar(liq, "HE50", "Horas extra 50%", f"{horas_50} hs × {hora_txt} × 1,5", "remunerativo",
                  valor_hora * Decimal(horas_50) * Decimal("1.5"))
         _agregar(liq, "HE100", "Horas extra 100%", f"{horas_100} hs × {hora_txt} × 2", "remunerativo",
                  valor_hora * Decimal(horas_100) * 2)
 
+    if zona_desfavorable:
+        _agregar_zona(liq, adic["zona_desfavorable_pct"], zona_base)
+
     aportes_y_neto(liq, afiliado=afiliado, alicuota_sindical=alicuota_sindical,
                    vivienda_en_especie=vivienda_en_especie, tope_base_imponible=tope_base_imponible)
+    return liq
+
+
+def _base_zona(liq: Liquidacion, zona_base: str) -> Decimal:
+    codigos = {"BAS", "ANT"} if zona_base == "basico_antiguedad" else None
+    return sum((c.importe for c in liq.remunerativos()
+                if c.codigo != "ZONA" and (codigos is None or c.codigo in codigos)), Decimal("0"))
+
+
+def _agregar_zona(liq: Liquidacion, porcentaje: Decimal, zona_base: str, base: Decimal | None = None) -> Decimal:
+    base = _base_zona(liq, zona_base) if base is None else base
+    pct = Decimal(porcentaje) / 100
+    que = "básico + antigüedad" if zona_base == "basico_antiguedad" else "remunerativo"
+    return _agregar(liq, "ZONA", "Zona fría", f"{_pct(pct)} s/ $ {pesos(base)} ({que})", "remunerativo",
+                    base * pct)
+
+
+def liquidar_zona_fria(mensual: Liquidacion, *, porcentaje: Decimal, zona_base: str = "remunerativo",
+                       afiliado: bool = True, alicuota_sindical: Decimal | None = None,
+                       tope_base_imponible: Decimal | None = None) -> Liquidacion:
+    """Zona fría en un recibo aparte, como la liquidan cinco de los seis consorcios.
+
+    La base sale del recibo mensual ya liquidado (sin zona). El recibo lleva los mismos
+    aportes del convenio y su propio redondeo.
+    """
+    if zona_base not in BASES_ZONA:
+        raise ValueError(f"base de zona desconocida: {zona_base}")
+    base = _base_zona(mensual, zona_base)
+    liq = Liquidacion(
+        periodo=mensual.periodo, categoria=mensual.categoria, basico_escala=mensual.basico_escala,
+        no_remunerativo_escala=Decimal("0"), vigencia_escala=mensual.vigencia_escala,
+        jornada_horas=mensual.jornada_horas, anios_antiguedad=mensual.anios_antiguedad,
+        dias_trabajados=mensual.dias_trabajados)
+    _agregar_zona(liq, porcentaje, zona_base, base)
+    aportes_y_neto(liq, afiliado=afiliado, alicuota_sindical=alicuota_sindical,
+                   vivienda_en_especie=False, tope_base_imponible=tope_base_imponible)
     return liq
 
 
@@ -270,10 +319,16 @@ def aportes_y_neto(liq: Liquidacion, *, afiliado: bool = True, alicuota_sindical
     if vivienda and vivienda_en_especie:
         _agregar(liq, "VIVE", "Vivienda (en especie)", "Compensa el haber de vivienda", "descuento", vivienda)
 
+    total_desc = _suma(liq, "descuento")
+    neto = rem + no_rem - total_desc
+    redondeo = neto.to_integral_value(rounding=ROUND_CEILING) - neto
+    if redondeo:
+        liq.conceptos.append(Concepto("RED", "Redondeo", "Neto al peso entero", "no_remunerativo", redondeo))
+        no_rem += redondeo
     liq.total_remunerativo = rem
     liq.total_no_remunerativo = no_rem
-    liq.total_descuentos = _suma(liq, "descuento")
-    liq.neto = rem + no_rem - liq.total_descuentos
+    liq.total_descuentos = total_desc
+    liq.neto = rem + no_rem - total_desc
     liq.informativos = [Concepto(c, desc, f"{_pct(a)} s/ $ {pesos(rem)}", "contribucion", redondear(rem * a))
                         for c, desc, a in CONTRIBUCIONES_CONVENIO]
 
