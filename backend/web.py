@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
+from . import conceptos as cp
 from . import servicios as sv
 from .calculo import CAUSAS_EGRESO, primer_dia
 from .calculo_suteryh import ADICIONALES, CATEGORIAS_EDIFICIO, CATEGORIAS_SUTERYH, CONVENIO_SUTERYH, TAREAS
@@ -84,8 +85,10 @@ def empresa(empresa_id: int):
         periodo_sugerido=_periodo_sugerido(conn, empresa_id),
         edificio=sv.edificio(conn, empresa_id), suteryh=CONVENIO_SUTERYH,
         con_encargados=any(e["convenio"] == CONVENIO_SUTERYH for e in lista),
-        arca=sv.datos_arca(conn, empresa_id),
+        arca=sv.datos_arca(conn, empresa_id), filas_descuento=sv.FILAS_DESCUENTO,
+        cerrados=sv.periodos_cerrados(conn, empresa_id),
         arca_empleado=empleado["arca"] if empleado else {},
+        conceptos=sv.conceptos_propios(conn, solo_activos=True), filas_concepto=sv.FILAS_CONCEPTO,
         tareas={t: ADICIONALES[t] for t in TAREAS})
 
 
@@ -99,6 +102,32 @@ def guardar_edificio(empresa_id: int):
     else:
         flash("Datos del edificio guardados.", "ok")
     return redirect(url_for("web.empresa", empresa_id=empresa_id) + "#edificio")
+
+
+@bp.post("/empresas/<int:empresa_id>/periodos/<periodo>")
+def cerrar_periodo(empresa_id: int, periodo: str):
+    _empresa(empresa_id)
+    cerrar = request.form.get("accion") != "reabrir"
+    try:
+        sv.cerrar_periodo(get_db(), empresa_id, periodo, cerrar)
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+    else:
+        flash(f"Período {periodo} {'cerrado: ya no se puede volver a liquidar' if cerrar else 'reabierto'}.", "ok")
+    return redirect(url_for("web.empresa", empresa_id=empresa_id))
+
+
+@bp.get("/copia-de-seguridad")
+def bajar_copia():
+    """Baja una copia de la base completa, para guardarla en otro lado (pendrive, nube)."""
+    import tempfile
+    from flask import current_app, send_file
+    from .db import copia_de_seguridad
+    carpeta = tempfile.mkdtemp()
+    ruta = copia_de_seguridad(current_app.config["DATABASE"], carpeta)
+    if ruta is None:
+        abort(404)
+    return send_file(ruta, as_attachment=True, download_name=f"liquidador_{date.today().isoformat()}.db")
 
 
 @bp.post("/empresas/<int:empresa_id>/arca")
@@ -156,9 +185,11 @@ def liquidar_form(empresa_id: int):
         _avisar_error(exc)
         return redirect(url_for("web.empresa", empresa_id=empresa_id))
     previo = sv.ultimo_pago(conn, empresa_id)
+    lista = sv.empleados_del_periodo(conn, empresa_id, tipo, periodo)
     return render_template(
         "liquidar.html", empresa=empresa, tipo=tipo, periodo=periodo,
-        empleados=sv.empleados_del_periodo(conn, empresa_id, tipo, periodo),
+        empleados=lista,
+        cantidades={e["id"]: sv.conceptos_con_cantidad(conn, e, periodo) for e in lista} if tipo == "mensual" else {},
         ya_liquidado=bool(sv.liquidaciones_de(conn, empresa_id, periodo, tipo)),
         datos={"lugar_pago": empresa["lugar_pago"] or "", **previo}, suteryh=CONVENIO_SUTERYH)
 
@@ -173,8 +204,12 @@ def liquidar(empresa_id: int):
     por_empleado = {}
     for clave, valor in form.items():
         campo, _, emp_id = clave.rpartition("_")
-        if campo in CAMPOS_POR_EMPLEADO and emp_id.isdigit() and valor.strip():
+        if not (emp_id.isdigit() and valor.strip()):
+            continue
+        if campo in CAMPOS_POR_EMPLEADO:
             por_empleado.setdefault(int(emp_id), {})[CAMPOS_POR_EMPLEADO[campo]] = valor
+        elif campo.startswith("cantidad_"):   # cantidad del mes de un concepto propio
+            por_empleado.setdefault(int(emp_id), {})[campo] = valor
     try:
         periodo, hechas, errores = sv.liquidar_empresa(get_db(), empresa_id, tipo, form, por_empleado)
     except sv.ErrorDatos as exc:
@@ -194,7 +229,7 @@ def liquidar(empresa_id: int):
 
 # Campos del formulario de liquidación que van por empleado ("<campo>_<id>").
 CAMPOS_POR_EMPLEADO = {"inasistencias": "inasistencias_injustificadas", "horas_50": "horas_50",
-                       "horas_100": "horas_100"}
+                       "horas_100": "horas_100", "anticipo": "anticipo"}
 
 TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales", "zona_fria": "Zona fría",
            "sac_zona_fria": "Aguinaldo s/ zona fría"}
@@ -337,3 +372,32 @@ def agregar_categorias():
     else:
         flash(f"Se agregaron {n} categorías a {codigo}.", "ok")
     return redirect(url_for("web.convenios"))
+
+
+# --- Conceptos propios ---------------------------------------------------------------
+@bp.get("/conceptos")
+def conceptos():
+    conn = get_db()
+    editar = None
+    if request.args.get("editar"):
+        editar = sv.concepto_propio(conn, request.args["editar"])
+        if editar is None:
+            abort(404)
+    empresas_ = sv.empresas(conn)
+    return render_template("conceptos.html", conceptos=sv.conceptos_propios(conn), editar=editar,
+                           tipos=cp.TIPOS, calculos=cp.CALCULOS, variables=cp.VARIABLES,
+                           convenios=sv.convenios(conn), empresas=empresas_,
+                           nombres_empresa={e["id"]: e["razon_social"] for e in empresas_})
+
+
+@bp.post("/conceptos")
+def guardar_concepto():
+    try:
+        codigo = sv.guardar_concepto(get_db(), request.form)
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+        codigo = (request.form.get("codigo") or "").strip().upper()
+        existe = codigo and sv.concepto_propio(get_db(), codigo)
+        return redirect(url_for("web.conceptos", editar=codigo if existe else None) + "#form")
+    flash(f"Concepto {codigo} guardado.", "ok")
+    return redirect(url_for("web.conceptos"))

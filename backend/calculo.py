@@ -97,6 +97,9 @@ class Concepto:
     detalle: str          # cómo se determinó (art. 140 inc. c LCT)
     tipo: str             # "remunerativo" | "no_remunerativo" | "indemnizacion" | "descuento"
     importe: Decimal
+    # Solo los conceptos propios (backend/conceptos.py) cambian estos dos:
+    habitual: bool = True   # cuenta para SAC, vacaciones e indemnizaciones
+    aportes: bool = True    # no remunerativo con obra social y aportes sindicales (Comercio)
 
 
 @dataclass
@@ -147,7 +150,13 @@ class Liquidacion:
             if isinstance(v, dict):
                 return {k: conv(x) for k, x in v.items()}
             return v
-        return conv(asdict(self))
+        d = conv(asdict(self))
+        for lista in (d["conceptos"], d["informativos"]):
+            for c in lista:   # el JSON de los conceptos de siempre no cambia
+                for campo in ("habitual", "aportes"):
+                    if c[campo] is True:
+                        del c[campo]
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Liquidacion":
@@ -199,6 +208,7 @@ def _haberes_comercio(
     asignacion_extraordinaria: Decimal = Decimal("0"),
     inasistencias_injustificadas: int = 0,
     dias: int = 30,
+    conceptos_extra=None,
 ) -> Liquidacion:
     """Haberes del mes sin aportes. Ver `liquidar_comercio`."""
     if not 1 <= dias <= 30:
@@ -240,6 +250,8 @@ def _haberes_comercio(
         liq.conceptos.append(Concepto(
             "EXTR", "Asignación extraordinaria",
             f"Única vez · {jornada_txt.split(' · ')[0]}", "no_remunerativo", extra))
+    if conceptos_extra:
+        conceptos_extra(liq, dias)
     return liq
 
 
@@ -256,16 +268,18 @@ def liquidar_comercio(
     inasistencias_injustificadas: int = 0,
     tope_base_imponible: Decimal | None = None,
     dias: int = 30,
+    conceptos_extra=None,
 ) -> Liquidacion:
     """`basico`, `no_remunerativo` y `asignacion_extraordinaria` son montos de jornada completa.
 
     `dias` (sobre 30) es para el mes de ingreso o de egreso; ver `dias_del_mes`.
+    `conceptos_extra(liq, dias)` agrega los conceptos propios antes de los aportes.
     """
     liq = _haberes_comercio(
         periodo=periodo, categoria=categoria, basico=basico, vigencia_escala=vigencia_escala,
         fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas,
         asignacion_extraordinaria=asignacion_extraordinaria,
-        inasistencias_injustificadas=inasistencias_injustificadas, dias=dias)
+        inasistencias_injustificadas=inasistencias_injustificadas, dias=dias, conceptos_extra=conceptos_extra)
     _aportes_y_neto(liq, Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA, tope_base_imponible)
     return liq
 
@@ -275,6 +289,8 @@ def _aportes_y_neto(liq: Liquidacion, factor: Decimal, tope_base_imponible: Deci
     parcial = factor != 1
     total_rem = sum((c.importe for c in liq.remunerativos()), Decimal("0"))
     total_nr = sum((c.importe for c in liq.no_remunerativos()), Decimal("0"))
+    # Sumas no remunerativas propias que no pagan obra social ni aportes sindicales.
+    nr_sin_aportes = sum((c.importe for c in liq.no_remunerativos() if not c.aportes), Decimal("0"))
     # Indemnizaciones y vacaciones no gozadas: sin aportes (art. 7 Ley 24.241).
     total_ind = sum((c.importe for c in liq.indemnizatorios()), Decimal("0"))
 
@@ -284,7 +300,7 @@ def _aportes_y_neto(liq: Liquidacion, factor: Decimal, tope_base_imponible: Deci
             base, detalle = tope_base_imponible, f"{_pct(pct)} s/ tope $ {pesos(tope_base_imponible)}"
         liq.conceptos.append(Concepto(codigo, desc, detalle, "descuento", redondear(base * pct)))
 
-    base_total = total_rem + total_nr
+    base_total = total_rem + total_nr - nr_sin_aportes
     for codigo, desc, pct, completa in APORTES_TOTALES:
         if completa and parcial:
             # Obra social de jornada parcial: aporte sobre la jornada completa (art. 92 ter LCT).
@@ -327,7 +343,13 @@ def semestre_de(periodo: str) -> tuple[date, date]:
 
 
 def _nr_habitual(liq: Liquidacion) -> Decimal:
-    return sum((c.importe for c in liq.no_remunerativos() if c.codigo not in NO_HABITUALES), Decimal("0"))
+    return sum((c.importe for c in liq.no_remunerativos() if c.codigo not in NO_HABITUALES and c.habitual),
+               Decimal("0"))
+
+
+def _rem_habitual(liq: Liquidacion) -> Decimal:
+    """Remunerativo sin los conceptos propios no habituales (base de vacaciones e indemnización)."""
+    return sum((c.importe for c in liq.remunerativos() if c.habitual), Decimal("0"))
 
 
 def _agregar_sac(liq: Liquidacion, meses: list, inicio: date, fin: date, desde: date, hasta: date,
@@ -458,6 +480,7 @@ def liquidar_final(
     vacaciones_gozadas: Decimal = Decimal("0"),
     tope_indemnizatorio: Decimal | None = None,
     tope_base_imponible: Decimal | None = None,
+    conceptos_extra=None,
 ) -> Liquidacion:
     """Liquidación final del mes del egreso.
 
@@ -481,7 +504,7 @@ def liquidar_final(
         periodo=periodo, categoria=categoria, basico=basico, vigencia_escala=vigencia_escala,
         fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas,
         asignacion_extraordinaria=asignacion_extraordinaria,
-        inasistencias_injustificadas=inasistencias_injustificadas, dias=dias)
+        inasistencias_injustificadas=inasistencias_injustificadas, dias=dias, conceptos_extra=conceptos_extra)
     liq.tipo = "final"
     liq.anios_antiguedad = anios_cumplidos(fecha_ingreso, fecha_egreso)
     liq.egreso = {"fecha": fecha_egreso.isoformat(), "causa": causa,
@@ -491,8 +514,9 @@ def liquidar_final(
     # preaviso e integración): la de este mes como si se hubiera trabajado entero.
     mes_completo = _haberes_comercio(
         periodo=periodo, categoria=categoria, basico=basico, vigencia_escala=vigencia_escala,
-        fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas)
-    rem_mes = sum((c.importe for c in mes_completo.remunerativos()), Decimal("0"))
+        fecha_ingreso=fecha_ingreso, no_remunerativo=no_remunerativo, jornada_horas=jornada_horas,
+        conceptos_extra=conceptos_extra)
+    rem_mes = _rem_habitual(mes_completo)
     nr_mes = _nr_habitual(mes_completo)
     mes_completo.total_remunerativo = rem_mes
 
@@ -531,7 +555,7 @@ def liquidar_final(
         if not prueba:
             # Mejor remuneración mensual normal y habitual del último año (sin SAC).
             desde = _sumar_meses(primer_dia(periodo), -12)
-            candidatos = [l.total_remunerativo + _nr_habitual(l) for l in historial
+            candidatos = [_rem_habitual(l) + _nr_habitual(l) for l in historial
                           if l.tipo == "mensual" and l.dias_trabajados >= 30
                           and desde <= primer_dia(l.periodo) < primer_dia(periodo)]
             base = max(candidatos + [base_mes])
@@ -573,3 +597,30 @@ def liquidar_final(
 
     _aportes_y_neto(liq, factor, tope_base_imponible)
     return liq
+
+
+def aplicar_descuentos_varios(liq: Liquidacion, descuentos: list) -> None:
+    """Agrega descuentos que no salen del convenio (mutual, embargo, préstamo, anticipo) y rehace
+    el redondeo: el recibo resta todo antes de llevar el neto al peso entero.
+
+    `descuentos`: lista de (código, descripción, detalle, importe).
+    """
+    descuentos = [d for d in descuentos if d[3] > 0]
+    if not descuentos:
+        return
+    redondeo = sum((c.importe for c in liq.conceptos if c.codigo == "RED"), Decimal("0"))
+    liq.conceptos = [c for c in liq.conceptos if c.codigo != "RED"]
+    total_nr = liq.total_no_remunerativo - redondeo
+    for codigo, descripcion, detalle, importe in descuentos:
+        liq.conceptos.append(Concepto(codigo, descripcion, detalle, "descuento", redondear(importe)))
+    total_desc = sum((c.importe for c in liq.descuentos()), Decimal("0"))
+    neto = liq.total_remunerativo + total_nr - total_desc
+    if neto < 0:
+        raise ValueError(f"Los descuentos (${pesos(total_desc)}) superan lo que cobra en el recibo")
+    redondeo = neto.to_integral_value(rounding=ROUND_CEILING) - neto
+    if redondeo:
+        liq.conceptos.append(Concepto("RED", "Redondeo", "Neto al peso entero", "no_remunerativo", redondeo))
+        total_nr += redondeo
+    liq.total_no_remunerativo = total_nr
+    liq.total_descuentos = total_desc
+    liq.neto = liq.total_remunerativo + total_nr - total_desc
