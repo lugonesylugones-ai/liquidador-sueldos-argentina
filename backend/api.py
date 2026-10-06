@@ -216,3 +216,25 @@ def guardar_datos_arca(empresa_id: int):
     conn = get_db()
     sv.guardar_datos_arca(conn, empresa_id, request.get_json(force=True))
     return jsonify(sv.datos_arca(conn, empresa_id))
+
+
+# --- Conceptos propios ---------------------------------------------------------
+@bp.get("/conceptos")
+def listar_conceptos():
+    return jsonify(sv.conceptos_propios(get_db()))
+
+
+@bp.post("/conceptos")
+def guardar_concepto():
+    """Alta o modificación (por código) de un concepto propio y su fórmula."""
+    conn = get_db()
+    codigo = sv.guardar_concepto(conn, request.get_json(force=True))
+    return jsonify(sv.concepto_propio(conn, codigo)), 201
+
+
+@bp.get("/conceptos/<codigo>")
+def ver_concepto(codigo: str):
+    c = sv.concepto_propio(get_db(), codigo)
+    if c is None:
+        abort(404)
+    return jsonify(c)

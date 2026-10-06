@@ -14,6 +14,7 @@ from .calculo import (CAUSAS_EGRESO, Liquidacion, aplicar_descuentos_varios, dia
 from .calculo_suteryh import (ADICIONALES, BASES_ZONA, CARGO_POR_NOMBRE, CONVENIO_SUTERYH, TAREAS, fila_basico,
                               liquidar_sac_suteryh, liquidar_suteryh, liquidar_zona_fria, nombres_escala)
 from . import arca
+from . import conceptos as cp
 from .cuit import normalizar_cuit
 from .empleados import leer_empleados, validar_categoria
 from .formato import pesos
@@ -108,7 +109,8 @@ def empresa(conn, empresa_id: int):
 
 
 def empleados(conn, empresa_id: int) -> list:
-    return [{**dict(r), "extras": extras(r), "arca": arca_empleado(r), "descuentos": descuentos_empleado(r)}
+    return [{**dict(r), "extras": extras(r), "arca": arca_empleado(r), "descuentos": descuentos_empleado(r),
+             "conceptos": conceptos_empleado(r)}
             for r in conn.execute(
         "SELECT * FROM empleados WHERE empresa_id = ? ORDER BY fecha_egreso IS NOT NULL, apellido, nombre",
         (empresa_id,))]
@@ -124,6 +126,7 @@ def extras(emp) -> dict:
     guardados = json.loads(emp["extras"]) if emp["extras"] else {}
     guardados.pop("arca", None)   # los datos para el F.931 van aparte (arca_empleado)
     guardados.pop("descuentos", None)   # y los descuentos varios (descuentos_empleado)
+    guardados.pop("conceptos", None)    # y los conceptos propios asignados (conceptos_empleado)
     return {**EXTRAS_SUTERYH, **guardados} if emp["convenio"] == CONVENIO_SUTERYH else guardados
 
 
@@ -314,7 +317,8 @@ def guardar_empleado(conn, empresa_id: int, d: dict) -> int:
             "fecha_ingreso": ingreso.isoformat(), "jornada_horas": jornada,
             "fecha_egreso": egreso.isoformat() if egreso else None,
             "extras": json.dumps({**(_extras_suteryh(d) if convenio == CONVENIO_SUTERYH else {}),
-                                  "arca": _extras_arca(d), "descuentos": _extras_descuentos(d)})})
+                                  "arca": _extras_arca(d), "descuentos": _extras_descuentos(d),
+                                  "conceptos": _extras_conceptos(conn, d, convenio)})})
     except sqlite3.IntegrityError as exc:
         raise ErrorDatos(f"No se pudo guardar el empleado: {exc}")
     conn.commit()
@@ -396,6 +400,7 @@ def liquidar_mensual(conn, emp, periodo_: str, d: dict) -> Liquidacion:
     escala, extraordinaria = _escala_del_mes(conn, emp, periodo_, d)
     try:
         return liquidar_comercio(
+            conceptos_extra=_hook_conceptos(definiciones_para(conn, emp, periodo_, d)),
             periodo=periodo_, categoria=emp["categoria"], basico=escala.monto,
             no_remunerativo=escala.no_remunerativo, vigencia_escala=escala.vigencia_desde,
             fecha_ingreso=ingreso, jornada_horas=emp["jornada_horas"],
@@ -435,7 +440,8 @@ def _mensual_suteryh(conn, emp, periodo_: str, d: dict, ingreso: date, dias: int
             horas_100=decimal_opcional(d, "horas_100") or Decimal("0"),
             afiliado=ex["afiliado"], alicuota_sindical=decimal_opcional(d, "alicuota_sindical"),
             tope_base_imponible=decimal_opcional(d, "tope_base_imponible"),
-            antiguedad_completa=ex["antiguedad_completa"])
+            antiguedad_completa=ex["antiguedad_completa"],
+            conceptos_extra=_hook_conceptos(definiciones_para(conn, emp, periodo_, d)))
     except ValueError as exc:
         raise ErrorDatos(str(exc))
 
@@ -488,9 +494,9 @@ def _zona_fria_aparte(conn, emp, mensual: Liquidacion, d: dict) -> Liquidacion |
 def _guardar_mes(conn, emp, liq: Liquidacion, pago: dict, d: dict) -> tuple[int, Liquidacion | None]:
     """Guarda la liquidación y, si corresponde, el recibo aparte de zona fría (o de su SAC)."""
     zona = _zona_fria_aparte(conn, emp, liq, d)
-    _descontar(emp, liq, d)
+    _descontar(conn, emp, liq, d)
     if zona is not None:
-        _descontar(emp, zona, d)
+        _descontar(conn, emp, zona, d)
     liq_id = _guardar_liquidacion(conn, emp, liq, pago)
     tipo_zona = {"mensual": "zona_fria", "sac": "sac_zona_fria"}.get(liq.tipo)
     if zona is not None:
@@ -588,10 +594,11 @@ def liquidar_egreso(conn, empleado_id: int, d: dict) -> tuple[int, Liquidacion]:
             preaviso_otorgado=str(d.get("preaviso_otorgado", "")).lower() in ("1", "true", "si", "sí", "on"),
             vacaciones_gozadas=decimal_opcional(d, "vacaciones_gozadas") or Decimal("0"),
             tope_indemnizatorio=decimal_opcional(d, "tope_indemnizatorio"),
-            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"))
+            tope_base_imponible=decimal_opcional(d, "tope_base_imponible"),
+            conceptos_extra=_hook_conceptos(definiciones_para(conn, emp, periodo_, d)))
     except ValueError as exc:
         raise ErrorDatos(str(exc))
-    _descontar(emp, liq, d)
+    _descontar(conn, emp, liq, d)
     conn.execute("UPDATE empleados SET fecha_egreso = ? WHERE id = ?", (egreso.isoformat(), emp["id"]))
     # La final reemplaza al sueldo y al SAC del mes del egreso, y a una final anterior mal cargada.
     conn.execute("""DELETE FROM liquidaciones WHERE empleado_id = ?
@@ -831,7 +838,7 @@ def _extras_descuentos(d: dict) -> list:
     return [x for x in (_descuento(d, n) for n in range(1, FILAS_DESCUENTO + 1)) if x]
 
 
-def _descontar(emp, liq: Liquidacion, d: dict) -> None:
+def _descontar(conn, emp, liq: Liquidacion, d: dict) -> None:
     """Descuentos fijos del empleado y el anticipo del mes. Los importes fijos van en el sueldo
     (o la final); los porcentajes, en cada recibo, y el mínimo no embargable solo en el sueldo."""
     principal = liq.tipo in ("mensual", "final")
@@ -855,6 +862,7 @@ def _descontar(emp, liq: Liquidacion, d: dict) -> None:
     if anticipo and principal:
         items.append(("DANT", "Anticipo de haberes", "Entregado a cuenta", anticipo))
     try:
+        items += cp.descuentos(liq, definiciones_para(conn, emp, liq.periodo, d), principal=principal)
         aplicar_descuentos_varios(liq, items)
     except ValueError as exc:
         raise ErrorDatos(str(exc))
@@ -963,7 +971,7 @@ def archivo_arca(conn, empresa_id: int, periodo_: str) -> tuple[str, str]:
             cuil=emp["cuil"], legajo=emp["legajo"] or "", jornada_horas=emp["jornada_horas"],
             obra_social=datos["obra_social"], fecha_pago=pago, conceptos=conceptos, dias_trabajados=dias,
             factor_obra_social=factor, conyuge=datos["conyuge"], hijos=datos["hijos"], cbu=datos["cbu"],
-            cantidades=cantidades))
+            cantidades=cantidades, propios=_propios_arca(conn, emp["convenio"])))
     if not trabajadores:
         raise ErrorDatos(f"No hay recibos liquidados en {periodo_}")
     codigos = datos_arca(conn, empresa_id)
@@ -983,4 +991,198 @@ def archivo_conceptos_arca(conn, empresa_id: int) -> tuple[str, str]:
     if emp_empresa is None:
         raise ErrorDatos("La empresa no existe")
     cuit_ = "".join(c for c in emp_empresa["cuit"] if c.isdigit())
-    return arca.archivo_conceptos(arca.CONCEPTOS), f"LSD_conceptos_{cuit_}.txt"
+    convenios_ = {r["convenio"] for r in conn.execute("SELECT DISTINCT convenio FROM empleados WHERE empresa_id = ?",
+                                                      (empresa_id,))}
+    convenio = CONVENIO_SUTERYH if convenios_ == {CONVENIO_SUTERYH} else None
+    propios = {k: v for k, v in _propios_arca(conn, convenio).items()
+               if concepto_propio(conn, k)["empresa_id"] in (None, empresa_id)}
+    return (arca.archivo_conceptos(list(arca.CONCEPTOS) + list(propios), propios),
+            f"LSD_conceptos_{cuit_}.txt")
+
+
+# --- Conceptos propios ------------------------------------------------------------
+FILAS_CONCEPTO = 3   # cuántos conceptos se asignan por empleado desde la pantalla
+# Lo que no puede ser el código de un concepto propio: los del liquidador y las variables.
+_RESERVADOS = set(arca.CONCEPTOS) | {"SACP", "HE50", "HE100"} | set(cp.VARIABLES)
+_PREFIJOS_RESERVADOS = ("INAS", "SAC")
+
+
+def conceptos_propios(conn, solo_activos: bool = False) -> list:
+    sql = "SELECT * FROM conceptos" + (" WHERE activo = 1" if solo_activos else "") + " ORDER BY orden, codigo"
+    return [{**dict(r), "base": [b for b in r["base"].split(",") if b]} for r in conn.execute(sql)]
+
+
+def concepto_propio(conn, codigo: str):
+    r = conn.execute("SELECT * FROM conceptos WHERE codigo = ?", (codigo,)).fetchone()
+    return {**dict(r), "base": [b for b in r["base"].split(",") if b]} if r else None
+
+
+def _codigos_conocidos(conn, sin: str = "") -> set:
+    propios = {r["codigo"] for r in conn.execute("SELECT codigo FROM conceptos WHERE codigo <> ?", (sin,))}
+    return set(arca.CONCEPTOS) | {"HE50", "HE100"} | propios
+
+
+def guardar_concepto(conn, d: dict) -> str:
+    """Alta o modificación de un concepto propio. El código no se cambia una vez creado."""
+    codigo = (d.get("codigo") or "").strip().upper()
+    if not cp.CODIGO_VALIDO.match(codigo):
+        raise ErrorDatos("El código va en mayúsculas, empieza con una letra y tiene de 2 a 10 letras o números")
+    if codigo in _RESERVADOS or codigo.startswith(_PREFIJOS_RESERVADOS):
+        raise ErrorDatos(f"El código {codigo} ya lo usa el liquidador: elegí otro")
+    tipo, calculo = d.get("tipo") or "", d.get("calculo") or ""
+    if tipo not in cp.TIPOS:
+        raise ErrorDatos(f"Tipo desconocido: {tipo or '(vacío)'}. Valen: {', '.join(cp.TIPOS)}")
+    if calculo not in cp.CALCULOS:
+        raise ErrorDatos(f"Cálculo desconocido: {calculo or '(vacío)'}. Valen: {', '.join(cp.CALCULOS)}")
+    valor = decimal_opcional(d, "valor") or Decimal("0")
+    if valor < 0:
+        raise ErrorDatos("El valor no puede ser negativo")
+    base = d.get("base") or []
+    if isinstance(base, str):
+        base = base.replace(";", ",").replace(" ", ",").split(",")
+    base = [b.strip().upper() for b in base if b.strip()]
+    formula = (d.get("formula") or "").strip()
+    conocidos = _codigos_conocidos(conn, codigo) | set(cp.VARIABLES)
+    if calculo == "porcentaje":
+        if not base:
+            raise ErrorDatos("Decí sobre qué conceptos se calcula el porcentaje (por ejemplo BAS, ANT)")
+        if not 0 < valor <= 1000:
+            raise ErrorDatos("El porcentaje tiene que ser mayor a 0")
+    elif calculo == "formula":
+        if not formula:
+            raise ErrorDatos("Falta la fórmula")
+        try:
+            nombres = cp.nombres_de(formula)
+        except cp.ErrorFormula as exc:
+            raise ErrorDatos(str(exc))
+        base = []
+    usados = set(base) if calculo == "porcentaje" else (nombres if calculo == "formula" else set())
+    if codigo in usados:
+        raise ErrorDatos("Un concepto no se puede calcular sobre sí mismo")
+    desconocidos = sorted(usados - conocidos)
+    if desconocidos:
+        raise ErrorDatos(f"No conozco {', '.join(desconocidos)}: usá códigos del recibo (BAS, ANT, PRES...), "
+                         f"de otros conceptos tuyos o {', '.join(cp.VARIABLES)}")
+    codigo_arca = str(d.get("arca") or "").strip()
+    if not (codigo_arca.isdigit() and len(codigo_arca) == 6):
+        raise ErrorDatos("El código ARCA tiene 6 dígitos (por ejemplo 160000 remunerativo, 540000 no "
+                         "remunerativo, 820000 descuento): consultalo con el contador")
+    convenio = (d.get("convenio") or "").strip() or None
+    if convenio and convenio not in categorias(conn):
+        raise ErrorDatos(f"El convenio {convenio} no existe")
+    empresa_id = d.get("empresa_id") or None
+    if empresa_id:
+        empresa_id = int(empresa_id)
+        if empresa(conn, empresa_id) is None:
+            raise ErrorDatos("La empresa no existe")
+    fila = (codigo, requerido(d, "descripcion").strip()[:60], tipo, calculo, str(valor), ",".join(base), formula,
+            int(si_no(d, "proporcional", True)), int(si_no(d, "habitual", True)), int(si_no(d, "aportes", True)),
+            codigo_arca, convenio, empresa_id, int(si_no(d, "automatico", False)), entero(d, "orden", 100),
+            int(si_no(d, "activo", True)))
+    conn.execute(
+        """INSERT INTO conceptos (codigo, descripcion, tipo, calculo, valor, base, formula, proporcional, habitual,
+                                  aportes, arca, convenio, empresa_id, automatico, orden, activo)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (codigo) DO UPDATE SET descripcion = excluded.descripcion, tipo = excluded.tipo,
+             calculo = excluded.calculo, valor = excluded.valor, base = excluded.base, formula = excluded.formula,
+             proporcional = excluded.proporcional, habitual = excluded.habitual, aportes = excluded.aportes,
+             arca = excluded.arca, convenio = excluded.convenio, empresa_id = excluded.empresa_id,
+             automatico = excluded.automatico, orden = excluded.orden, activo = excluded.activo""", fila)
+    conn.commit()
+    return codigo
+
+
+def conceptos_empleado(emp) -> list:
+    return (json.loads(emp["extras"]) if emp["extras"] else {}).get("conceptos", [])
+
+
+def _asignacion(d: dict, n: int | None = None) -> dict | None:
+    """Un concepto propio asignado a un empleado, con su valor y cantidad si son distintos."""
+    def campo(nombre):
+        return d.get(f"concepto_{nombre}_{n}") if n is not None else d.get(nombre)
+    codigo = (campo("codigo") or "").strip().upper()
+    if not codigo:
+        return None
+    out = {"codigo": codigo}
+    for nombre in ("valor", "cantidad"):
+        v = decimal_opcional({nombre: campo(nombre)}, nombre)
+        if v is not None:
+            if v < 0:
+                raise ErrorDatos(f"El {nombre} de {codigo} no puede ser negativo")
+            out[nombre] = str(v)
+    hasta = (campo("hasta") or "").strip()
+    if hasta:
+        try:
+            primer_dia(hasta)
+        except ValueError:
+            raise ErrorDatos("'hasta' es el último período del concepto, AAAA-MM")
+        out["hasta"] = hasta
+    return out
+
+
+def _extras_conceptos(conn, d: dict, convenio: str) -> list:
+    if isinstance(d.get("conceptos"), list):   # API JSON
+        asignados = [_asignacion(x) for x in d["conceptos"]]
+    else:
+        asignados = [_asignacion(d, n) for n in range(1, FILAS_CONCEPTO + 1)]
+    asignados = [a for a in asignados if a]
+    for a in asignados:
+        c = concepto_propio(conn, a["codigo"])
+        if c is None:
+            raise ErrorDatos(f"No existe el concepto {a['codigo']}: crealo primero en Conceptos")
+        if c["convenio"] and c["convenio"] != convenio:
+            raise ErrorDatos(f"El concepto {a['codigo']} es del convenio {c['convenio']}")
+    return asignados
+
+
+def _cantidad_del_mes(d: dict, codigo: str):
+    cantidades = d.get("cantidades") if isinstance(d.get("cantidades"), dict) else {}
+    return decimal_opcional({"c": cantidades.get(codigo, d.get(f"cantidad_{codigo}"))}, "c")
+
+
+def definiciones_para(conn, emp, periodo_: str, d: dict) -> list:
+    """Los conceptos propios que le tocan al empleado en el período, con su valor y cantidad:
+    los automáticos de su convenio y empresa, y los que tiene asignados (que pisan valor y cantidad)."""
+    asignados = {a["codigo"]: a for a in conceptos_empleado(emp) if not a.get("hasta") or periodo_ <= a["hasta"]}
+    defs = []
+    for c in conceptos_propios(conn, solo_activos=True):
+        alcance = (c["convenio"] in (None, emp["convenio"]) and c["empresa_id"] in (None, emp["empresa_id"]))
+        a = asignados.get(c["codigo"])
+        if a is None and not (c["automatico"] and alcance):
+            continue
+        a = a or {}
+        cantidad = _cantidad_del_mes(d, c["codigo"])
+        defs.append(cp.Definicion(
+            codigo=c["codigo"], descripcion=c["descripcion"], tipo=c["tipo"], calculo=c["calculo"],
+            valor=Decimal(a.get("valor", c["valor"])), base=tuple(c["base"]), formula=c["formula"],
+            proporcional=bool(c["proporcional"]), habitual=bool(c["habitual"]), aportes=bool(c["aportes"]),
+            cantidad=cantidad if cantidad is not None else Decimal(a.get("cantidad", "0"))))
+    return defs
+
+
+def _hook_conceptos(defs: list):
+    """Función para los motores: agrega los haberes propios antes de los aportes."""
+    if not any(x.tipo != "descuento" for x in defs):
+        return None
+
+    def agregar(liq, dias):
+        try:
+            cp.aplicar_haberes(liq, defs, dias=dias)
+        except cp.ErrorFormula as exc:
+            raise ValueError(str(exc))
+    return agregar
+
+
+def conceptos_con_cantidad(conn, emp, periodo_: str) -> list:
+    """Conceptos del empleado que piden una cantidad por mes (para la pantalla de liquidar)."""
+    return [x for x in definiciones_para(conn, emp, periodo_, {})
+            if x.calculo == "cantidad" or (x.calculo == "formula" and "CANTIDAD" in cp.nombres_de(x.formula))]
+
+
+def _propios_arca(conn, convenio: str | None) -> dict:
+    """Conceptos propios para el Libro de Sueldos Digital. En edificios lo no remunerativo no paga
+    obra social (el motor no la cobra), así que no suma a ninguna base."""
+    return {c["codigo"]: arca.ConceptoArca(
+        c["arca"], c["descripcion"],
+        arca.bases_propio(c["tipo"], bool(c["aportes"]) and convenio != CONVENIO_SUTERYH))
+        for c in conceptos_propios(conn)}

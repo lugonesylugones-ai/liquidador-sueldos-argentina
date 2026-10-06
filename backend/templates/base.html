@@ -17,6 +17,7 @@
       --acento: #5aa9ff; --ok: #3ee6a0; --error: #ff6b81; --aviso: #ffcf4a;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { margin: 0; }
     html { background: var(--fondo-2); }
     body { font: 14.5px/1.5 "Poppins", system-ui, sans-serif; color: var(--texto);
@@ -113,6 +114,8 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Escalas</a>
     <a href="{{ url_for('web.convenios') }}" class="{{ 'activo' if seccion == 'web.convenios' }}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/></svg>Sindicatos</a>
+    <a href="{{ url_for('web.conceptos') }}" class="{{ 'activo' if seccion == 'web.conceptos' }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5zM8 8h8M8 12h3M13 12h3M8 16h3M13 16h3"/></svg>Conceptos</a>
     <div class="pie">Uso local · sin usuarios<br>Copia automática diaria en la carpeta "copias".
       <a href="{{ url_for('web.bajar_copia') }}" style="color:var(--acento)">Bajar copia ahora</a></div>
   </aside>

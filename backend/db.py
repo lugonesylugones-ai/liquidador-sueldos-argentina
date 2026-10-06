@@ -82,6 +82,26 @@ CREATE TABLE IF NOT EXISTS empleados (
     UNIQUE (empresa_id, legajo)
 );
 
+-- Conceptos que carga el usuario (plus, premios, sumas no remunerativas, descuentos) y su fórmula.
+CREATE TABLE IF NOT EXISTS conceptos (
+    codigo TEXT PRIMARY KEY,          -- va en el recibo y en el Libro de Sueldos Digital
+    descripcion TEXT NOT NULL,
+    tipo TEXT NOT NULL CHECK (tipo IN ('remunerativo', 'no_remunerativo', 'descuento')),
+    calculo TEXT NOT NULL CHECK (calculo IN ('fijo', 'porcentaje', 'cantidad', 'formula')),
+    valor TEXT NOT NULL DEFAULT '0',  -- importe, porcentaje o valor unitario (Decimal como texto)
+    base TEXT NOT NULL DEFAULT '',    -- porcentaje: códigos que suma, separados por coma
+    formula TEXT NOT NULL DEFAULT '',
+    proporcional INTEGER NOT NULL DEFAULT 1,   -- suma fija: × horas/8 × días/30
+    habitual INTEGER NOT NULL DEFAULT 1,       -- cuenta para SAC, vacaciones e indemnizaciones
+    aportes INTEGER NOT NULL DEFAULT 1,        -- no remunerativo: paga obra social y aportes sindicales
+    arca TEXT NOT NULL,               -- código de concepto ARCA (6 dígitos)
+    convenio TEXT REFERENCES convenios(codigo),   -- NULL: cualquier convenio
+    empresa_id INTEGER REFERENCES empresas(id),   -- NULL: todas las empresas
+    automatico INTEGER NOT NULL DEFAULT 0,     -- 1: a todos los del convenio/empresa; 0: a quien se le asigne
+    orden INTEGER NOT NULL DEFAULT 100,        -- se calculan de menor a mayor
+    activo INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS liquidaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empleado_id INTEGER NOT NULL REFERENCES empleados(id),

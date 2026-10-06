@@ -156,6 +156,28 @@ planillas de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcada
 - **Copias de seguridad**: una por día en la carpeta `copias/` al lado de la base (quedan las últimas 30;
   `CARPETA_COPIAS` la cambia), y "Bajar copia ahora" en el menú para guardarla en otro lado.
 
+## Conceptos propios
+
+En **Conceptos** (o `POST /api/conceptos`) se crean los que no trae el convenio: plus, premios, sumas no
+remunerativas o descuentos. Cada uno lleva:
+
+- **Tipo**: remunerativo (paga todos los aportes), no remunerativo (con o sin obra social y aportes
+  sindicales; en edificios lo no remunerativo no paga nada) o descuento.
+- **Cálculo**: suma fija (proporcional a la jornada y a los días, si se elige), porcentaje de otros
+  conceptos (`BAS, ANT` o `TOTAL_REM`, `TOTAL_NR`, `BRUTO`), valor × cantidad, o fórmula libre
+  (`(BAS + ANT) / 200 * 1.5 * CANTIDAD`; solo números, códigos, + - * / ( ), min, max, abs, redondear).
+- **Habitual**: si cuenta para aguinaldo, vacaciones e indemnización.
+- **Código ARCA** para el Libro de Sueldos Digital: los remunerativos suman a todas las bases; los no
+  remunerativos con obra social, a las de obra social y ART, como los acuerdos de Comercio.
+- **A quién**: automático a todos los de un convenio y/o empresa, o solo a los empleados que lo tengan
+  asignado (en su ficha, con valor o cantidad propios y "hasta"). La cantidad de un mes se carga al liquidar
+  (`cantidades: {"GUAR": 6}` por API).
+
+Los haberes se calculan después de los del convenio y antes de los aportes (en edificios, antes de las horas
+extra y la zona fría, así entran en el valor hora y en la base de la zona). Los descuentos, después de los
+aportes. Se calculan por `orden`: un concepto puede usar a los propios que van antes. Sin conceptos propios
+los recibos dan exactamente igual que antes.
+
 ## ARCA: Libro de Sueldos Digital y F.931
 
 El F.931 se arma desde el Libro de Sueldos Digital (LSD) de ARCA, importando dos archivos de texto

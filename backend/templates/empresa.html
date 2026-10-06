@@ -178,6 +178,28 @@
         </tr>{% endfor %}
       </table></div>
     </fieldset>
+    {% set cs = (empleado.conceptos if empleado else []) %}
+    <fieldset>
+      <legend>Conceptos propios</legend>
+      <p class="muted" style="margin-top:0">Los que se crean en <a href="{{ url_for('web.conceptos') }}">Conceptos</a>.
+        Los automáticos ya se liquidan solos; acá asignás los demás, o le cambiás el valor o la cantidad a uno.
+        Valor y cantidad vacíos: los del concepto. La cantidad de un mes también se puede cargar al liquidar.</p>
+      {% if conceptos %}
+      <div class="tabla"><table>
+        <tr><th>Concepto</th><th>Valor propio</th><th>Cantidad</th><th>Hasta</th></tr>
+        {% for n in range(1, filas_concepto + 1) %}{% set x = cs[n - 1] if cs|length >= n else {} %}
+        <tr>
+          <td><select name="concepto_codigo_{{ n }}" aria-label="Concepto {{ n }}">
+            <option value="">—</option>
+            {% for c in conceptos %}<option value="{{ c.codigo }}"{% if x.codigo == c.codigo %} selected{% endif %}>{{ c.codigo }} · {{ c.descripcion }}</option>{% endfor %}
+          </select></td>
+          <td><input name="concepto_valor_{{ n }}" inputmode="decimal" value="{{ x.valor or '' }}" style="width:7rem"></td>
+          <td><input name="concepto_cantidad_{{ n }}" inputmode="decimal" value="{{ x.cantidad or '' }}" style="width:5rem"></td>
+          <td><input type="month" name="concepto_hasta_{{ n }}" value="{{ x.hasta or '' }}"></td>
+        </tr>{% endfor %}
+      </table></div>
+      {% else %}<p class="muted">Todavía no hay conceptos propios.</p>{% endif %}
+    </fieldset>
     <fieldset id="datos-suteryh" class="suteryh">
       <legend>Encargados de edificio (CCT 589/10)</legend>
       <p class="muted" style="margin-top:0">La jornada sale del cargo: los de media jornada liquidan 4 hs.</p>
