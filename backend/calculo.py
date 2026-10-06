@@ -117,6 +117,8 @@ class Liquidacion:
     tipo: str = "mensual"          # "mensual" | "sac" | "final"
     # Solo en la liquidación final: causa del egreso, fecha y si se otorgó preaviso.
     egreso: dict | None = None
+    # Datos que no van en el recibo, como las contribuciones del empleador de cada convenio.
+    informativos: list = field(default_factory=list)
 
     def de_tipo(self, tipo: str):
         return [c for c in self.conceptos if c.tipo == tipo]
@@ -155,6 +157,8 @@ class Liquidacion:
         datos["vigencia_escala"] = date.fromisoformat(d["vigencia_escala"])
         datos.setdefault("egreso", None)
         datos["conceptos"] = [Concepto(**{**c, "importe": Decimal(c["importe"])}) for c in d["conceptos"]]
+        datos["informativos"] = [Concepto(**{**c, "importe": Decimal(c["importe"])})
+                                 for c in d.get("informativos", [])]
         return cls(**datos)
 
 
@@ -357,6 +361,7 @@ def liquidar_sac(
     jornada_horas: int = HORAS_JORNADA_COMPLETA,
     fecha_egreso: date | None = None,
     tope_base_imponible: Decimal | None = None,
+    aportes=None,
 ) -> Liquidacion:
     """Sueldo anual complementario (Ley 23.041 y art. 121 LCT).
 
@@ -366,6 +371,7 @@ def liquidar_sac(
     días trabajados en el semestre. La parte no remunerativa (acuerdo + antig. +
     presentismo) se trata igual y va como "SAC s/ no remunerativo"; la asignación
     de única vez y el redondeo no cuentan porque no son habituales.
+    `aportes(liq)`: aportes de otro convenio; por defecto, los de Comercio.
     """
     inicio, fin = semestre_de(periodo)
     meses = [l for l in historial if l.tipo == "mensual" and inicio <= primer_dia(l.periodo) <= fin]
@@ -384,7 +390,10 @@ def liquidar_sac(
         dias_trabajados=0, tipo="sac",
     )
     liq.dias_trabajados = _agregar_sac(liq, meses, inicio, fin, desde, hasta)
-    _aportes_y_neto(liq, Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA, tope_base_imponible)
+    if aportes:
+        aportes(liq)
+    else:
+        _aportes_y_neto(liq, Decimal(jornada_horas) / HORAS_JORNADA_COMPLETA, tope_base_imponible)
     return liq
 
 

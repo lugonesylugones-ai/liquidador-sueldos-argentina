@@ -5,7 +5,7 @@
   <a href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">{{ empresa.razon_social }}</a> /
   <a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=liq.periodo, tipo=liq.tipo) }}">{{ liq.periodo }}</a></div>
 <h1>{{ d.apellido }}, {{ d.nombre }}</h1>
-<p class="sub">{{ {'mensual': 'Sueldo', 'sac': 'Aguinaldo', 'final': 'Liquidación final'}[liq.tipo] }} {{ liq.periodo }} · {{ liq.categoria }} · {{ liq.jornada_horas }} hs
+<p class="sub">{{ {'mensual': 'Sueldo', 'sac': 'Aguinaldo', 'final': 'Liquidación final', 'zona_fria': 'Zona fría', 'sac_zona_fria': 'Aguinaldo s/ zona fría'}[liq.tipo] }} {{ liq.periodo }} · {{ liq.categoria }} · {{ liq.jornada_horas }} hs
   {% if liq.egreso %} · Egreso {{ liq.egreso.fecha }}: {{ causas.get(liq.egreso.causa, liq.egreso.causa) }}{% endif %}</p>
 <div class="tiles">
   <div class="tile g2"><div class="valor">$ {{ liq.total_remunerativo|pesos }}</div><div class="rotulo">Remunerativo</div></div>
@@ -32,4 +32,17 @@
         <td class="num">{{ liq.total_no_remunerativo|pesos }}</td><td class="num">{{ liq.total_descuentos|pesos }}</td></tr>
   </table></div>
 </section>
+{% if liq.informativos %}
+<section>
+  <h2>Contribuciones del empleador del convenio</h2>
+  <p class="muted">No van en el recibo: se pagan con las boletas sindicales. Alícuotas sin verificar.</p>
+  <div class="tabla"><table>
+    <tr><th>Cód.</th><th>Concepto</th><th>Cómo se calculó</th><th class="num">Importe</th></tr>
+    {% for c in liq.informativos %}
+    <tr><td class="muted">{{ c.codigo }}</td><td>{{ c.descripcion }}</td><td class="muted">{{ c.detalle }}</td>
+        <td class="num">{{ c.importe|pesos }}</td></tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
 {% endblock %}

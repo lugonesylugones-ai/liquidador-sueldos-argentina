@@ -58,7 +58,7 @@ def crear_convenio():
 @bp.get("/escalas/plantilla")
 def descargar_plantilla():
     convenio = request.args.get("convenio", CONVENIO_COMERCIO)
-    cats = sv.categorias_de(get_db(), convenio)
+    cats = sv.filas_de_escala(get_db(), convenio)
     nombre = "comercio" if convenio == CONVENIO_COMERCIO else "".join(c if c.isalnum() else "_" for c in convenio)
     return send_file(BytesIO(generar_plantilla(categorias=cats)), as_attachment=True,
                      download_name=f"plantilla_escala_{nombre}.xlsx", mimetype=XLSX)
@@ -94,6 +94,21 @@ def listar_empresas():
 def listar_empleados(empresa_id: int):
     _empresa_o_404(empresa_id)
     return jsonify(sv.empleados(get_db(), empresa_id))
+
+
+@bp.get("/empresas/<int:empresa_id>/edificio")
+def ver_edificio(empresa_id: int):
+    _empresa_o_404(empresa_id)
+    return jsonify(sv.edificio(get_db(), empresa_id))
+
+
+@bp.put("/empresas/<int:empresa_id>/edificio")
+def guardar_edificio(empresa_id: int):
+    """Consorcios (CCT 589/10): categoría del edificio, unidades funcionales y zona desfavorable."""
+    _empresa_o_404(empresa_id)
+    conn = get_db()
+    sv.guardar_edificio(conn, empresa_id, request.get_json(force=True))
+    return jsonify(sv.edificio(conn, empresa_id))
 
 
 @bp.post("/empleados")

@@ -11,6 +11,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 
 from . import servicios as sv
 from .calculo import CAUSAS_EGRESO, primer_dia
+from .calculo_suteryh import ADICIONALES, CATEGORIAS_EDIFICIO, CATEGORIAS_SUTERYH, CONVENIO_SUTERYH, TAREAS
 from .db import get_db
 from .escalas import CONVENIO_COMERCIO
 
@@ -75,11 +76,27 @@ def empresa(empresa_id: int):
     empleado = None
     if editar:
         empleado = next((e for e in sv.empleados(conn, empresa_id) if e["id"] == editar), None)
+    lista = sv.empleados(conn, empresa_id)
     return render_template(
-        "empresa.html", empresa=_empresa(empresa_id), empleados=sv.empleados(conn, empresa_id),
+        "empresa.html", empresa=_empresa(empresa_id), empleados=lista,
         empleado=empleado, categorias=sv.categorias(conn),
         liquidaciones=sv.liquidaciones_por_periodo(conn, empresa_id),
-        periodo_sugerido=_periodo_sugerido(conn, empresa_id))
+        periodo_sugerido=_periodo_sugerido(conn, empresa_id),
+        edificio=sv.edificio(conn, empresa_id), suteryh=CONVENIO_SUTERYH,
+        con_encargados=any(e["convenio"] == CONVENIO_SUTERYH for e in lista),
+        tareas={t: ADICIONALES[t] for t in TAREAS})
+
+
+@bp.post("/empresas/<int:empresa_id>/edificio")
+def guardar_edificio(empresa_id: int):
+    _empresa(empresa_id)
+    try:
+        sv.guardar_edificio(get_db(), empresa_id, request.form)
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+    else:
+        flash("Datos del edificio guardados.", "ok")
+    return redirect(url_for("web.empresa", empresa_id=empresa_id) + "#edificio")
 
 
 def _periodo_sugerido(conn, empresa_id: int) -> str:
@@ -129,7 +146,7 @@ def liquidar_form(empresa_id: int):
         "liquidar.html", empresa=empresa, tipo=tipo, periodo=periodo,
         empleados=sv.empleados_del_periodo(conn, empresa_id, tipo, periodo),
         ya_liquidado=bool(sv.liquidaciones_de(conn, empresa_id, periodo, tipo)),
-        datos={"lugar_pago": empresa["lugar_pago"] or "", **previo})
+        datos={"lugar_pago": empresa["lugar_pago"] or "", **previo}, suteryh=CONVENIO_SUTERYH)
 
 
 @bp.post("/empresas/<int:empresa_id>/liquidar")
@@ -141,8 +158,9 @@ def liquidar(empresa_id: int):
         abort(400)
     por_empleado = {}
     for clave, valor in form.items():
-        if clave.startswith("inasistencias_") and valor.strip():
-            por_empleado[int(clave.split("_", 1)[1])] = {"inasistencias_injustificadas": valor}
+        campo, _, emp_id = clave.rpartition("_")
+        if campo in CAMPOS_POR_EMPLEADO and emp_id.isdigit() and valor.strip():
+            por_empleado.setdefault(int(emp_id), {})[CAMPOS_POR_EMPLEADO[campo]] = valor
     try:
         periodo, hechas, errores = sv.liquidar_empresa(get_db(), empresa_id, tipo, form, por_empleado)
     except sv.ErrorDatos as exc:
@@ -150,7 +168,9 @@ def liquidar(empresa_id: int):
         return redirect(url_for("web.liquidar_form", empresa_id=empresa_id, tipo=tipo,
                                 periodo=form.get("periodo") or None))
     if hechas:
-        flash(f"Listo: {len(hechas)} recibos de {_titulo(tipo, periodo)}.", "ok")
+        zona = sum(1 for h in hechas if "neto_zona_fria" in h)
+        flash(f"Listo: {len(hechas)} recibos de {_titulo(tipo, periodo)}"
+              + (f", más {zona} de zona fría aparte." if zona else "."), "ok")
     for e in errores:
         flash(f"{e['empleado']}: {e['error']}", "error")
     if not hechas:
@@ -158,7 +178,12 @@ def liquidar(empresa_id: int):
     return redirect(url_for("web.liquidaciones", empresa_id=empresa_id, periodo=periodo, tipo=tipo))
 
 
-TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales"}
+# Campos del formulario de liquidación que van por empleado ("<campo>_<id>").
+CAMPOS_POR_EMPLEADO = {"inasistencias": "inasistencias_injustificadas", "horas_50": "horas_50",
+                       "horas_100": "horas_100"}
+
+TITULOS = {"mensual": "Sueldos", "sac": "Aguinaldo", "final": "Liquidaciones finales", "zona_fria": "Zona fría",
+           "sac_zona_fria": "Aguinaldo s/ zona fría"}
 
 
 def _titulo(tipo: str, periodo: str) -> str:
@@ -235,8 +260,22 @@ def escalas():
     por_vigencia = {}
     for f in sv.escalas(conn, convenio):
         por_vigencia.setdefault(f["vigencia_desde"], []).append(f)
+    cuadros = {v: _cuadro_edificios(filas) for v, filas in por_vigencia.items()} \
+        if convenio == CONVENIO_SUTERYH else {}
     return render_template("escalas.html", por_vigencia=por_vigencia, convenio=convenio,
-                           convenios=sv.convenios(conn))
+                           convenios=sv.convenios(conn), cuadros=cuadros, cats_edificio=CATEGORIAS_EDIFICIO)
+
+
+def _cuadro_edificios(filas: list) -> dict:
+    """Escala de edificios como cuadro cargo × categoría del edificio, más los adicionales."""
+    por_fila = {f["categoria"]: f for f in filas}
+    cargos = []
+    for cargo in CATEGORIAS_SUTERYH:
+        montos = [por_fila.get(f"{cargo}|{c}") for c in CATEGORIAS_EDIFICIO]
+        if any(montos):
+            cargos.append((cargo, montos, all(m["verificada"] for m in montos if m)))
+    adicionales = [por_fila[n] for n in ADICIONALES.values() if n in por_fila]
+    return {"cargos": cargos, "adicionales": adicionales}
 
 
 @bp.post("/escalas/importar")

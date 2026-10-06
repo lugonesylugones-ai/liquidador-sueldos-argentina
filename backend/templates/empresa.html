@@ -21,7 +21,7 @@
   <div class="tabla" style="margin-top:1rem"><table>
     <tr><th>Período</th><th>Tipo</th><th class="num">Recibos</th><th class="num">Neto total</th><th></th></tr>
     {% for l in liquidaciones %}
-    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
+    <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% elif l.tipo == 'sac_zona_fria' %}<span class="chip">Aguinaldo zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
             <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>
@@ -29,6 +29,38 @@
   </table></div>
   {% endif %}
 </section>
+
+{% if con_encargados or edificio %}
+<section id="edificio">
+  <h2>Edificio (encargados, CCT 589/10)</h2>
+  <p class="muted">Lo usa el sueldo de los encargados: el básico depende de la categoría del edificio y el retiro
+    de residuos de las unidades funcionales.</p>
+  {% set ed = edificio or {} %}
+  <form method="post" action="{{ url_for('web.guardar_edificio', empresa_id=empresa.id) }}">
+    <div class="grilla">
+      <label>Categoría del edificio <select name="categoria" required>
+        <option value="">Elegí</option>
+        {% for c, txt in [(1, '1ª: 3 o más servicios centrales'), (2, '2ª: 2 servicios'), (3, '3ª: 1 servicio'), (4, '4ª: sin servicios centrales')] %}
+        <option value="{{ c }}"{% if ed.categoria == c %} selected{% endif %}>{{ txt }}</option>{% endfor %}
+      </select></label>
+      <label>Unidades funcionales <input type="number" name="unidades_funcionales" min="0" value="{{ ed.unidades_funcionales or 0 }}"></label>
+      <label>Zona fría / desfavorable <select name="zona_desfavorable">
+        <option value="0">No</option><option value="1"{% if ed.zona_desfavorable %} selected{% endif %}>Sí (50%)</option>
+      </select></label>
+      <label>Zona sobre <select name="zona_base">
+        <option value="remunerativo">Todo lo remunerativo</option>
+        <option value="basico_antiguedad"{% if ed.zona_base == 'basico_antiguedad' %} selected{% endif %}>Básico + antigüedad</option>
+      </select></label>
+      <label>Zona en <select name="zona_recibo_aparte">
+        <option value="0">El mismo recibo</option>
+        <option value="1"{% if ed.zona_recibo_aparte %} selected{% endif %}>Un recibo aparte</option>
+      </select></label>
+    </div>
+    <div class="acciones"><button>Guardar edificio</button>
+      {% if not edificio %}<span class="msg error" style="margin:0">Falta cargarlo para liquidar a los encargados.</span>{% endif %}</div>
+  </form>
+</section>
+{% endif %}
 
 <section>
   <h2>Empleados</h2>
@@ -69,6 +101,30 @@
       <label>Jornada (horas por día) <input type="number" name="jornada_horas" min="1" max="8" value="{{ e.jornada_horas or 8 }}"></label>
       <label>Fecha de egreso <input type="date" name="fecha_egreso" value="{{ e.fecha_egreso or '' }}"></label>
     </div>
+    {% set ex = e.extras or {} %}
+    <fieldset id="datos-suteryh" class="suteryh">
+      <legend>Encargados de edificio (CCT 589/10)</legend>
+      <p class="muted" style="margin-top:0">La jornada sale del cargo: los de media jornada liquidan 4 hs.</p>
+      <div class="grilla">
+        <label>Afiliado al sindicato <select name="afiliado">
+          <option value="1">Sí (cuota sindical 2%)</option><option value="0"{% if ex.afiliado == false %} selected{% endif %}>No</option>
+        </select></label>
+        <label>Retira residuos <select name="retira_residuos">
+          <option value="0">No</option><option value="1"{% if ex.retira_residuos %} selected{% endif %}>Sí (por UF del edificio)</option>
+        </select></label>
+        <label>Título encargado integral <select name="tramos_titulo">
+          {% for t in range(4) %}<option value="{{ t }}"{% if (ex.tramos_titulo or 0) == t %} selected{% endif %}>{{ 'No' if t == 0 else t ~ ' tramo' ~ ('s' if t > 1 else '') ~ ' (' ~ t * 5 ~ '%)' }}</option>{% endfor %}
+        </select></label>
+        <label>Antigüedad en jornada reducida <select name="antiguedad_completa">
+          <option value="0">1% por año (convenio)</option><option value="1"{% if ex.antiguedad_completa %} selected{% endif %}>2% por año (mejora pactada)</option>
+        </select></label>
+      </div>
+      <div class="tareas">
+        {% for clave, nombre in tareas.items() %}
+        <label class="check"><input type="checkbox" name="tareas" value="{{ clave }}"{% if clave in (ex.tareas or []) %} checked{% endif %}> {{ nombre }}</label>
+        {% endfor %}
+      </div>
+    </fieldset>
     <div class="acciones">
       <button>Guardar</button>
       {% if empleado %}<a class="boton sec" href="{{ url_for('web.empresa', empresa_id=empresa.id) }}">Cancelar</a>
@@ -100,7 +156,11 @@
       cat.add(o);
     }
   }
+  const suteryh = document.getElementById("datos-suteryh");
+  function mostrarSuteryh() { suteryh.hidden = conv.value !== {{ suteryh|tojson }}; }
   conv.addEventListener("change", llenar);
+  conv.addEventListener("change", mostrarSuteryh);
   llenar();
+  mostrarSuteryh();
 </script>
 {% endblock %}

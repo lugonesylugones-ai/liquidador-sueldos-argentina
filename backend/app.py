@@ -1,8 +1,8 @@
 """Aplicación Flask del liquidador.
 
 Soporta varias empresas, cada una con sus empleados y cada empleado con su
-convenio. Por ahora el único convenio con motor de cálculo es Comercio
-(CCT 130/75); los demás se pueden dar de alta pero no liquidar.
+convenio. Tienen motor de cálculo Comercio (CCT 130/75) y edificios
+(CCT 589/10); los demás se pueden dar de alta pero no liquidar.
 
 Las pantallas están en `web` (raíz del sitio) y la API JSON en `api` (/api).
 """

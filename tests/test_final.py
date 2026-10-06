@@ -169,32 +169,32 @@ def test_base_vieja_se_migra(tmp_path):
 
 def test_convenio_nuevo_con_categorias_y_escala(client):
     from backend.escalas import generar_plantilla
-    r = client.post("/convenios/nuevo", data={"codigo": "CCT 589/10", "nombre": "SUTERYH",
+    r = client.post("/convenios/nuevo", data={"codigo": "CCT 389/04", "nombre": "Gastronómicos",
                                               "categorias": "Encargado permanente\nAyudante\n"},
                     follow_redirects=True)
-    assert "Convenio CCT 589/10 creado" in r.text and "Sin cálculo todavía" in r.text
-    r = client.post("/convenios/categorias", data={"codigo": "CCT 589/10", "categorias": "Suplente\nAyudante"},
+    assert "Convenio CCT 389/04 creado" in r.text and "Sin cálculo todavía" in r.text
+    r = client.post("/convenios/categorias", data={"codigo": "CCT 389/04", "categorias": "Suplente\nAyudante"},
                     follow_redirects=True)
     assert "Se agregaron 1 categorías" in r.text
     cats = client.get("/api/convenios").json
-    assert next(c for c in cats if c["codigo"] == "CCT 589/10")["categorias"] == \
+    assert next(c for c in cats if c["codigo"] == "CCT 389/04")["categorias"] == \
         ["Encargado permanente", "Ayudante", "Suplente"]
 
-    plantilla = client.get("/api/escalas/plantilla?convenio=CCT 589/10").data
+    plantilla = client.get("/api/escalas/plantilla?convenio=CCT 389/04").data
     from openpyxl import load_workbook
     assert [r[0].value for r in load_workbook(BytesIO(plantilla))["Escala"].iter_rows(min_row=2)] == \
         ["Encargado permanente", "Ayudante", "Suplente"]
     contenido = generar_plantilla({"encargado permanente": D("900000"), "Ayudante": D("800000"),
                                    "Suplente": D("700000")}, vigencia=date(2026, 10, 1),
                                   categorias=["encargado permanente", "Ayudante", "Suplente"])
-    r = client.post("/escalas/importar", data={"convenio": "CCT 589/10",
-                                               "archivo": (BytesIO(contenido), "suteryh.xlsx")},
+    r = client.post("/escalas/importar", data={"convenio": "CCT 389/04",
+                                               "archivo": (BytesIO(contenido), "gastro.xlsx")},
                     follow_redirects=True)
     assert "Se cargaron 3 filas" in r.text and "Encargado permanente" in r.text
-    assert len(client.get("/api/escalas?convenio=CCT 589/10").json) == 3
+    assert len(client.get("/api/escalas?convenio=CCT 389/04").json) == 3
     # Una categoría de Comercio no entra en otro convenio.
     otra = generar_plantilla({"Vendedor A": D("1")}, vigencia=date(2026, 10, 1), categorias=["Vendedor A"])
-    r = client.post("/escalas/importar", data={"convenio": "CCT 589/10",
+    r = client.post("/escalas/importar", data={"convenio": "CCT 389/04",
                                                "archivo": (BytesIO(otra), "x.xlsx")}, follow_redirects=True)
     assert "categoría desconocida" in r.text
 

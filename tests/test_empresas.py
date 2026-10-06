@@ -56,7 +56,7 @@ def test_cuit_invalido(texto):
 
 def test_instalacion_nueva_trae_categorias_y_escalas_marcadas(client):
     conv = client.get("/api/convenios").json
-    assert [c["codigo"] for c in conv] == ["CCT 130/75"]
+    assert [c["codigo"] for c in conv] == ["CCT 130/75", "CCT 589/10"]
     assert len(conv[0]["categorias"]) == 21
     escalas = client.get("/api/escalas").json
     assert len(escalas) == 63
@@ -146,13 +146,13 @@ def test_sac_fuera_de_junio_o_diciembre(client):
 
 
 def test_otro_convenio_se_da_de_alta_pero_no_se_liquida(client):
-    r = client.post("/api/convenios", json={"codigo": "CCT 589/10", "nombre": "Encargados de edificio (SUTERYH)",
-                                        "categorias": ["Encargado permanente con vivienda"]})
+    r = client.post("/api/convenios", json={"codigo": "CCT 389/04", "nombre": "Gastronómicos (UTHGRA)",
+                                        "categorias": ["Mozo"]})
     assert r.status_code == 201
     e = empresa(client)
     r = client.post("/api/empleados", json={
-        "empresa_id": e, "apellido": "X", "nombre": "Y", "cuil": "20-22222222-3", "convenio": "CCT 589/10",
-        "categoria": "Encargado permanente con vivienda", "fecha_ingreso": "2020-01-01"})
+        "empresa_id": e, "apellido": "X", "nombre": "Y", "cuil": "20-22222222-3", "convenio": "CCT 389/04",
+        "categoria": "Mozo", "fecha_ingreso": "2020-01-01"})
     assert r.status_code == 201
     r = client.post("/api/liquidaciones", json={**PAGO, "empleado_id": r.json["id"], "periodo": "2026-09"})
     assert r.status_code == 400 and "motor de cálculo" in r.json["error"]

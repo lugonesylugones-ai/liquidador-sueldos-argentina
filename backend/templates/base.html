@@ -53,6 +53,11 @@
     .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 16px; }
     label { display: flex; flex-direction: column; font-size: .8rem; color: var(--suave); gap: 5px; }
     label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--texto); font-size: .9rem; }
+    fieldset { border: 1px solid var(--borde); border-radius: 12px; padding: 12px 16px 16px; margin: 16px 0 0; }
+    fieldset[hidden] { display: none; }
+    legend { padding: 0 6px; font-size: .85rem; font-weight: 600; }
+    .tareas { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; }
+    h3 { font-size: .88rem; font-weight: 600; margin: 0 0 10px; }
     input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px;
                     background: var(--campo); color: var(--texto); min-width: 0; color-scheme: dark; }
     input:focus, select:focus, textarea:focus { outline: 2px solid var(--acento); outline-offset: 0; }
