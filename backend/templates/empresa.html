@@ -24,10 +24,45 @@
     <tr><td>{{ l.periodo }}</td><td>{% if l.tipo == 'sac' %}<span class="chip">Aguinaldo</span>{% elif l.tipo == 'final' %}<span class="chip rosa">Liquidación final</span>{% elif l.tipo == 'zona_fria' %}<span class="chip">Zona fría</span>{% elif l.tipo == 'sac_zona_fria' %}<span class="chip">Aguinaldo zona fría</span>{% else %}<span class="chip ok">Mensual</span>{% endif %}</td>
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
-            <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a></td></tr>
+            <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a>
+            {% if l.tipo == 'mensual' %} · <a href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=l.periodo) }}">Libro de Sueldos Digital</a>{% endif %}</td></tr>
     {% endfor %}
   </table></div>
   {% endif %}
+</section>
+
+<section id="arca">
+  <h2>Exportar Libro de Sueldos Digital (F.931)</h2>
+  {% set mensuales = liquidaciones|selectattr('tipo', 'equalto', 'mensual')|list %}
+  {% if mensuales %}
+  <form method="get">
+    <div class="acciones" style="margin-top:0">
+      <label>Período <select name="periodo">
+        {% for l in mensuales %}<option value="{{ l.periodo }}">{{ l.periodo }}</option>{% endfor %}
+      </select></label>
+      <a class="boton" id="bajar-lsd" href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=mensuales[0].periodo) }}">Bajar archivo del mes (TXT)</a>
+      <a class="boton sec" href="{{ url_for('api.conceptos_arca', empresa_id=empresa.id) }}">Bajar conceptos (TXT)</a>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted">Liquidá un mes y acá vas a poder bajar el archivo para ARCA.</p>
+  {% endif %}
+  <ol class="muted" style="margin:12px 0 0; padding-left:20px">
+    <li>La primera vez, en ARCA entrá a Libro de Sueldos Digital &gt; Parametrización de conceptos &gt; Importar, y subí el archivo de <strong>conceptos</strong>.</li>
+    <li>Cada mes, en Libro de Sueldos Digital &gt; Liquidaciones &gt; Importar desde archivo, subí el <strong>archivo del mes</strong>. Con eso ARCA arma el F.931.</li>
+  </ol>
+  <details style="margin-top:14px">
+    <summary>Códigos del empleador para ARCA{% if not arca.cargados %} (sin confirmar){% endif %}</summary>
+    <form method="post" action="{{ url_for('web.guardar_datos_arca', empresa_id=empresa.id) }}">
+      <div class="grilla" style="margin-top:10px">
+        <label>Tipo de empleador <input name="tipo_empleador" maxlength="1" required value="{{ arca.tipo_empleador }}" title="1 = Dec. 814/01 art. 2 inc. b"></label>
+        <label>Actividad <input name="actividad" maxlength="3" required value="{{ arca.actividad }}"></label>
+        <label>Zona <input name="zona" maxlength="2" required value="{{ arca.zona }}" title="04 = Resto de Buenos Aires"></label>
+      </div>
+      <div class="acciones"><button>Guardar códigos</button>
+        <span class="muted">Revisalos contra tu último F.931.</span></div>
+    </form>
+  </details>
 </section>
 
 {% if con_encargados or edificio %}
@@ -102,6 +137,18 @@
       <label>Fecha de egreso <input type="date" name="fecha_egreso" value="{{ e.fecha_egreso or '' }}"></label>
     </div>
     {% set ex = e.extras or {} %}
+    {% set ar = arca_empleado or {} %}
+    <fieldset>
+      <legend>Para el F.931 de ARCA</legend>
+      <div class="grilla">
+        <label>Obra social (código) <input name="obra_social" inputmode="numeric" maxlength="6" value="{{ ar.obra_social or '' }}" placeholder="Según convenio: 126205 OSECAC, 106401 OSPERYH"></label>
+        <label>Cónyuge <select name="conyuge">
+          <option value="0">No</option><option value="1"{% if ar.conyuge %} selected{% endif %}>Sí</option>
+        </select></label>
+        <label>Hijos <input type="number" name="hijos" min="0" max="99" value="{{ ar.hijos or 0 }}"></label>
+        <label>CBU (si cobra por banco) <input name="cbu" inputmode="numeric" maxlength="22" value="{{ ar.cbu or '' }}"></label>
+      </div>
+    </fieldset>
     <fieldset id="datos-suteryh" class="suteryh">
       <legend>Encargados de edificio (CCT 589/10)</legend>
       <p class="muted" style="margin-top:0">La jornada sale del cargo: los de media jornada liquidan 4 hs.</p>
@@ -155,6 +202,11 @@
       const o = new Option(nombre, nombre, false, nombre === actual);
       cat.add(o);
     }
+  }
+  const lsd = document.getElementById("bajar-lsd");
+  if (lsd) {
+    const sel = lsd.closest("form").periodo, base = lsd.href.replace(/\d{4}-\d{2}\.txt$/, "");
+    sel.addEventListener("change", () => { lsd.href = base + sel.value + ".txt"; });
   }
   const suteryh = document.getElementById("datos-suteryh");
   function mostrarSuteryh() { suteryh.hidden = conv.value !== {{ suteryh|tojson }}; }

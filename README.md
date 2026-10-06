@@ -144,6 +144,37 @@ planillas de SUTERH (`backend/datos/escalas_suteryh_2026_jul_sep.json`), marcada
 | SAC | Régimen general con los aportes del convenio |
 | Sin hacer | Liquidación final (vacaciones en días hábiles), faltas, suplentes y jornalizados |
 
+## ARCA: Libro de Sueldos Digital y F.931
+
+El F.931 se arma desde el Libro de Sueldos Digital (LSD) de ARCA, importando dos archivos de texto
+con los diseños oficiales ("Diseño de interfaz - conceptos" y "Diseño de interfaz - liquidación",
+[micrositio LSD](https://www.arca.gob.ar/LibrodeSueldosDigital), Guía 15):
+
+1. **Conceptos, una sola vez por empleador.** En la empresa, link "conceptos para ARCA"
+   (`GET /api/empresas/<id>/arca/conceptos.txt`). Se sube en LSD > Parametrización de conceptos.
+   Relaciona cada concepto del liquidador con uno de ARCA y marca a qué bases suma
+   (`backend/arca.py`, tabla `CONCEPTOS`).
+2. **Liquidación, cada mes.** En la pantalla del período, botón "Archivo para ARCA / F.931"
+   (`GET /api/empresas/<id>/arca/<AAAA-MM>.txt`). Se sube en LSD > Liquidaciones > Importar desde archivo.
+   Trae un registro '01', y por trabajador un '02', un '03' por concepto y un '04' con las bases
+   imponibles 1 a 10. Junta todos los recibos del mes de cada trabajador (sueldo, zona fría aparte,
+   SAC, liquidación final).
+
+| Dato | De dónde sale |
+|---|---|
+| Tipo de empleador, actividad, zona | Por empresa, sección "ARCA" (por defecto 1 = Dec. 814/01 art. 2 inc. b, 049, 04 = resto de Buenos Aires) |
+| Obra social, cónyuge, hijos, CBU | Por empleado (obra social por defecto: OSECAC 126205 en Comercio, OSPERYH 106401 en edificios). Con CBU la forma de pago es acreditación en cuenta |
+| Modalidad | 008 jornada completa, 001 jornada parcial |
+| Bases 1, 2, 3, 5 | Remunerativo |
+| Bases 4 y 8 (obra social) | Remunerativo + no remunerativo de Comercio; en jornada parcial de Comercio, a jornada completa |
+| Base 9 (ART) | Remunerativo + no remunerativo, sin redondeo |
+| Base 10 | Base 3 menos la detracción del art. 22 Ley 27.541 ($ 7.003,68 por trabajador, proporcional en jornada parcial) |
+| SAC | Junio y diciembre como SAC; en otro mes o en la liquidación final como SAC proporcional (120003) con sus días |
+
+Con el liquidado de septiembre 2026 de Comercio (3 empleados), las bases dan igual que el F.931 real
+salvo las de obra social, que difieren en $ 0,34. No calcula topes de base imponible: si un sueldo pasa
+el tope de ANSES, ARCA lo aplica al importar.
+
 ## Pendiente
 
 - Horas extra, vacaciones, licencias y feriados (Día del Empleado de Comercio).

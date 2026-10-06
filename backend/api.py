@@ -181,3 +181,38 @@ def recibo(liq_id: int):
 def recibos_empresa(empresa_id: int, periodo: str):
     """Todos los recibos de la empresa para el período, en un solo PDF (?tipo=sac para el SAC)."""
     return _pdf(sv.pdf_recibos_empresa(get_db(), empresa_id, periodo, request.args.get("tipo", "mensual")))
+
+
+# --- ARCA: Libro de Sueldos Digital / F.931 -------------------------------------
+def _txt(contenido: str, nombre: str):
+    # ARCA pide el archivo en ANSI (Windows-1252).
+    return send_file(BytesIO(contenido.encode("cp1252", errors="replace")), mimetype="text/plain",
+                     as_attachment=True, download_name=nombre)
+
+
+@bp.get("/empresas/<int:empresa_id>/arca/<periodo>.txt")
+def archivo_arca(empresa_id: int, periodo: str):
+    """Liquidación del período para importar en el Libro de Sueldos Digital (arma el F.931)."""
+    _empresa_o_404(empresa_id)
+    return _txt(*sv.archivo_arca(get_db(), empresa_id, periodo))
+
+
+@bp.get("/empresas/<int:empresa_id>/arca/conceptos.txt")
+def conceptos_arca(empresa_id: int):
+    """Relación de los conceptos del liquidador con los de ARCA, para parametrizarlos una vez."""
+    _empresa_o_404(empresa_id)
+    return _txt(*sv.archivo_conceptos_arca(get_db(), empresa_id))
+
+
+@bp.get("/empresas/<int:empresa_id>/arca")
+def ver_datos_arca(empresa_id: int):
+    _empresa_o_404(empresa_id)
+    return jsonify(sv.datos_arca(get_db(), empresa_id))
+
+
+@bp.put("/empresas/<int:empresa_id>/arca")
+def guardar_datos_arca(empresa_id: int):
+    _empresa_o_404(empresa_id)
+    conn = get_db()
+    sv.guardar_datos_arca(conn, empresa_id, request.get_json(force=True))
+    return jsonify(sv.datos_arca(conn, empresa_id))

@@ -15,6 +15,7 @@
   {% if filas %}
   <div class="acciones" style="margin:0 0 14px">
     <a class="boton" href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=periodo, tipo=tipo) }}">Bajar todos los recibos (PDF)</a>
+    <a class="boton sec" href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=periodo) }}">Exportar Libro de Sueldos Digital (F.931)</a>
     {% if tipo in ('mensual', 'sac') %}<a class="boton sec" href="{{ url_for('web.liquidar_form', empresa_id=empresa.id, periodo=periodo, tipo=tipo) }}">Volver a liquidar</a>{% endif %}
   </div>
   <div class="tabla"><table>

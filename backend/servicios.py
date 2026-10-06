@@ -13,6 +13,7 @@ from .calculo import (CAUSAS_EGRESO, Liquidacion, dias_del_mes, liquidar_comerci
                       liquidar_sac, primer_dia, semestre_de, ultimo_dia)
 from .calculo_suteryh import (ADICIONALES, BASES_ZONA, CARGO_POR_NOMBRE, CONVENIO_SUTERYH, TAREAS, fila_basico,
                               liquidar_sac_suteryh, liquidar_suteryh, liquidar_zona_fria, nombres_escala)
+from . import arca
 from .cuit import normalizar_cuit
 from .empleados import leer_empleados, validar_categoria
 from .escalas import CONVENIO_COMERCIO, basico_vigente, guardar_escala, leer_plantilla
@@ -106,7 +107,7 @@ def empresa(conn, empresa_id: int):
 
 
 def empleados(conn, empresa_id: int) -> list:
-    return [{**dict(r), "extras": extras(r)} for r in conn.execute(
+    return [{**dict(r), "extras": extras(r), "arca": arca_empleado(r)} for r in conn.execute(
         "SELECT * FROM empleados WHERE empresa_id = ? ORDER BY fecha_egreso IS NOT NULL, apellido, nombre",
         (empresa_id,))]
 
@@ -119,6 +120,7 @@ EXTRAS_SUTERYH = {"afiliado": True, "retira_residuos": False, "tareas": [], "tra
 def extras(emp) -> dict:
     """Datos del empleado propios de su convenio (columna `extras`)."""
     guardados = json.loads(emp["extras"]) if emp["extras"] else {}
+    guardados.pop("arca", None)   # los datos para el F.931 van aparte (arca_empleado)
     return {**EXTRAS_SUTERYH, **guardados} if emp["convenio"] == CONVENIO_SUTERYH else guardados
 
 
@@ -308,7 +310,8 @@ def guardar_empleado(conn, empresa_id: int, d: dict) -> int:
             "cuil": cuit(d, "cuil"), "convenio": convenio, "categoria": categoria,
             "fecha_ingreso": ingreso.isoformat(), "jornada_horas": jornada,
             "fecha_egreso": egreso.isoformat() if egreso else None,
-            "extras": json.dumps(_extras_suteryh(d)) if convenio == CONVENIO_SUTERYH else None})
+            "extras": json.dumps({**(_extras_suteryh(d) if convenio == CONVENIO_SUTERYH else {}),
+                                  "arca": _extras_arca(d)})})
     except sqlite3.IntegrityError as exc:
         raise ErrorDatos(f"No se pudo guardar el empleado: {exc}")
     conn.commit()
@@ -746,3 +749,129 @@ def resumen_general(conn) -> dict:
     return {"empresas": r["empresas"], "activos": r["activos"], "ultimo_periodo": ultimo,
             "neto_ultimo": neto, "recibos_ultimo": recibos,
             "convenios": conn.execute("SELECT COUNT(*) FROM convenios").fetchone()[0]}
+
+
+# --- ARCA: Libro de Sueldos Digital y F.931 ------------------------------------
+def datos_arca(conn, empresa_id: int) -> dict:
+    """Códigos del empleador para el F.931; si no se cargaron, los valores por defecto."""
+    r = conn.execute("SELECT * FROM datos_arca WHERE empresa_id = ?", (empresa_id,)).fetchone()
+    por_defecto = {"tipo_empleador": arca.TIPO_EMPLEADOR, "actividad": arca.ACTIVIDAD, "zona": arca.ZONA}
+    return {**por_defecto, **({k: r[k] for k in por_defecto} if r else {}), "cargados": r is not None}
+
+
+def guardar_datos_arca(conn, empresa_id: int, d: dict) -> None:
+    if empresa(conn, empresa_id) is None:
+        raise ErrorDatos("La empresa no existe")
+    valores = {}
+    for campo, largo in (("tipo_empleador", 1), ("actividad", 3), ("zona", 2)):
+        valor = str(requerido(d, campo)).strip()
+        if not valor.isdigit() or len(valor) > largo:
+            raise ErrorDatos(f"'{campo}' tiene que ser un código de hasta {largo} dígitos")
+        valores[campo] = valor.zfill(largo)
+    conn.execute(
+        """INSERT INTO datos_arca (empresa_id, tipo_empleador, actividad, zona) VALUES (?, ?, ?, ?)
+           ON CONFLICT (empresa_id) DO UPDATE SET tipo_empleador = excluded.tipo_empleador,
+             actividad = excluded.actividad, zona = excluded.zona""",
+        (empresa_id, valores["tipo_empleador"], valores["actividad"], valores["zona"]))
+    conn.commit()
+
+
+def arca_empleado(emp) -> dict:
+    """Datos del trabajador para el F.931 (obra social, cónyuge, hijos, CBU), con sus defaults."""
+    guardados = (json.loads(emp["extras"]) if emp["extras"] else {}).get("arca", {})
+    return {"obra_social": arca.OBRA_SOCIAL.get(emp["convenio"], ""), "conyuge": False, "hijos": 0, "cbu": "",
+            **guardados}
+
+
+def _extras_arca(d: dict) -> dict:
+    obra_social = (d.get("obra_social") or "").strip()
+    if obra_social and (not obra_social.isdigit() or len(obra_social) > 6):
+        raise ErrorDatos("El código de obra social tiene hasta 6 dígitos (ej. 126205 OSECAC)")
+    cbu = "".join(c for c in (d.get("cbu") or "") if c.isdigit())
+    if cbu and len(cbu) != 22:
+        raise ErrorDatos("La CBU tiene 22 dígitos")
+    hijos = entero(d, "hijos", 0)
+    if not 0 <= hijos <= 99:
+        raise ErrorDatos("'hijos' va de 0 a 99")
+    datos = {"conyuge": si_no(d, "conyuge", False), "hijos": hijos, "cbu": cbu}
+    if obra_social:
+        datos["obra_social"] = obra_social.zfill(6)
+    return datos
+
+
+def _conceptos_del_periodo(conn, emp, periodo_: str) -> tuple[list, dict, date, int]:
+    """Suma por código los conceptos de todos los recibos del trabajador en el período
+    (sueldo, zona fría aparte, aguinaldo, liquidación final): el F.931 es uno por mes."""
+    filas = conn.execute("SELECT tipo, fecha_pago, resultado FROM liquidaciones WHERE empleado_id = ? "
+                         "AND periodo = ?", (emp["id"], periodo_)).fetchall()
+    sumas, cantidades, dias = {}, {}, 30
+    pago = max(date.fromisoformat(f["fecha_pago"]) for f in filas)
+    mes = int(periodo_[5:])
+    for f in filas:
+        liq = Liquidacion.from_dict(json.loads(f["resultado"])["liquidacion"])
+        if f["tipo"] in ("mensual", "final"):
+            dias = min(liq.dias_trabajados, 30)
+        for c in liq.conceptos:
+            codigo = c.codigo
+            if codigo == "SAC" and (f["tipo"] == "final" or mes not in (6, 12)):
+                # Fuera de junio y diciembre ARCA solo acepta el SAC proporcional, con sus días.
+                codigo = "SACP"
+                cantidades["SACP"] = _dias_sac(emp, periodo_, liq)
+            if codigo.startswith("INAS"):
+                cantidades[codigo] = cantidades.get(codigo, 0) + int(c.detalle.split()[0])
+            if codigo in ("HE50", "HE100"):
+                cantidades[codigo] = cantidades.get(codigo, Decimal("0")) + Decimal(
+                    c.detalle.split()[0].replace(",", "."))
+            clave = (codigo, c.tipo)
+            sumas[clave] = sumas.get(clave, Decimal("0")) + c.importe
+    conceptos = [(codigo, tipo, importe) for (codigo, tipo), importe in sumas.items()]
+    return conceptos, cantidades, pago, dias
+
+
+def _dias_sac(emp, periodo_: str, liq: Liquidacion) -> int:
+    inicio, fin = semestre_de(periodo_)
+    desde = max(inicio, date.fromisoformat(emp["fecha_ingreso"]))
+    hasta = date.fromisoformat(liq.egreso["fecha"]) if liq.egreso else min(fin, ultimo_dia(periodo_))
+    return (hasta - desde).days + 1
+
+
+def archivo_arca(conn, empresa_id: int, periodo_: str) -> tuple[str, str]:
+    """TXT de la liquidación del período para importar en el Libro de Sueldos Digital."""
+    emp_empresa = empresa(conn, empresa_id)
+    if emp_empresa is None:
+        raise ErrorDatos("La empresa no existe")
+    trabajadores = []
+    for emp in conn.execute(
+            """SELECT DISTINCT e.* FROM empleados e JOIN liquidaciones l ON l.empleado_id = e.id
+               WHERE e.empresa_id = ? AND l.periodo = ? ORDER BY e.apellido, e.nombre""",
+            (empresa_id, periodo_)):
+        conceptos, cantidades, pago, dias = _conceptos_del_periodo(conn, emp, periodo_)
+        datos = arca_empleado(emp)
+        # Comercio en jornada parcial: la obra social va sobre la jornada completa (art. 92 ter LCT).
+        factor = (Decimal(8) / emp["jornada_horas"]
+                  if emp["convenio"] == CONVENIO_COMERCIO and emp["jornada_horas"] < 8 else Decimal("1"))
+        trabajadores.append(arca.Trabajador(
+            cuil=emp["cuil"], legajo=emp["legajo"] or "", jornada_horas=emp["jornada_horas"],
+            obra_social=datos["obra_social"], fecha_pago=pago, conceptos=conceptos, dias_trabajados=dias,
+            factor_obra_social=factor, conyuge=datos["conyuge"], hijos=datos["hijos"], cbu=datos["cbu"],
+            cantidades=cantidades))
+    if not trabajadores:
+        raise ErrorDatos(f"No hay recibos liquidados en {periodo_}")
+    codigos = datos_arca(conn, empresa_id)
+    try:
+        texto = arca.archivo_liquidacion(
+            cuit_empleador=emp_empresa["cuit"], periodo=periodo_, trabajadores=trabajadores,
+            tipo_empleador=codigos["tipo_empleador"], actividad=codigos["actividad"], zona=codigos["zona"])
+    except arca.ErrorArca as exc:
+        raise ErrorDatos(str(exc))
+    cuit_ = "".join(c for c in emp_empresa["cuit"] if c.isdigit())
+    return texto, f"LSD_{cuit_}_{periodo_.replace('-', '')}.txt"
+
+
+def archivo_conceptos_arca(conn, empresa_id: int) -> tuple[str, str]:
+    """TXT con la relación de conceptos del empleador con los de ARCA (se sube una vez)."""
+    emp_empresa = empresa(conn, empresa_id)
+    if emp_empresa is None:
+        raise ErrorDatos("La empresa no existe")
+    cuit_ = "".join(c for c in emp_empresa["cuit"] if c.isdigit())
+    return arca.archivo_conceptos(arca.CONCEPTOS), f"LSD_conceptos_{cuit_}.txt"

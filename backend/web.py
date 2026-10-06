@@ -84,6 +84,8 @@ def empresa(empresa_id: int):
         periodo_sugerido=_periodo_sugerido(conn, empresa_id),
         edificio=sv.edificio(conn, empresa_id), suteryh=CONVENIO_SUTERYH,
         con_encargados=any(e["convenio"] == CONVENIO_SUTERYH for e in lista),
+        arca=sv.datos_arca(conn, empresa_id),
+        arca_empleado=empleado["arca"] if empleado else {},
         tareas={t: ADICIONALES[t] for t in TAREAS})
 
 
@@ -97,6 +99,18 @@ def guardar_edificio(empresa_id: int):
     else:
         flash("Datos del edificio guardados.", "ok")
     return redirect(url_for("web.empresa", empresa_id=empresa_id) + "#edificio")
+
+
+@bp.post("/empresas/<int:empresa_id>/arca")
+def guardar_datos_arca(empresa_id: int):
+    _empresa(empresa_id)
+    try:
+        sv.guardar_datos_arca(get_db(), empresa_id, request.form)
+    except sv.ErrorDatos as exc:
+        _avisar_error(exc)
+    else:
+        flash("Datos para ARCA guardados.", "ok")
+    return redirect(url_for("web.empresa", empresa_id=empresa_id) + "#arca")
 
 
 def _periodo_sugerido(conn, empresa_id: int) -> str:

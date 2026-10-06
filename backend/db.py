@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS edificios (
     zona_recibo_aparte INTEGER NOT NULL DEFAULT 0
 );
 
+-- Códigos del empleador para el Libro de Sueldos Digital / F.931 de ARCA, 1 a 1 con la empresa.
+CREATE TABLE IF NOT EXISTS datos_arca (
+    empresa_id INTEGER PRIMARY KEY REFERENCES empresas(id),
+    tipo_empleador TEXT NOT NULL,     -- tabla "Tipos de empleador" de Declaración en Línea
+    actividad TEXT NOT NULL,          -- tabla "Actividades"
+    zona TEXT NOT NULL                -- tabla "Localidades / zonas"
+);
+
 CREATE TABLE IF NOT EXISTS escalas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     convenio TEXT NOT NULL REFERENCES convenios(codigo),
