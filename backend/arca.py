@@ -134,6 +134,7 @@ class Trabajador:
     hijos: int = 0
     cbu: str = ""
     cantidades: dict = field(default_factory=dict)   # código -> cantidad (horas, días)
+    propios: dict = field(default_factory=dict)      # conceptos del usuario: código -> ConceptoArca
 
 
 def _alfa(valor: str, largo: int) -> str:
@@ -162,18 +163,27 @@ def _cuit(valor: str) -> str:
     return digitos
 
 
-def concepto_arca(codigo: str) -> ConceptoArca:
+def concepto_arca(codigo: str, propios: dict | None = None) -> ConceptoArca:
+    """`propios`: los conceptos que cargó el usuario, que no pisan a los del liquidador."""
     try:
-        return CONCEPTOS[codigo]
+        return CONCEPTOS[codigo] if codigo in CONCEPTOS else (propios or {})[codigo]
     except KeyError:
         raise ErrorArca(f"El concepto {codigo} no tiene concepto ARCA asignado") from None
 
 
-def archivo_conceptos(codigos) -> str:
+def bases_propio(tipo: str, aportes: bool) -> frozenset:
+    """Bases de un concepto del usuario: remunerativo, todas; no remunerativo con obra social, las
+    de los acuerdos de Comercio; el resto, ninguna."""
+    if tipo == "remunerativo":
+        return REM
+    return NR_OS if tipo == "no_remunerativo" and aportes else SIN_BASE
+
+
+def archivo_conceptos(codigos, propios: dict | None = None) -> str:
     """Relación conceptos del empleador - ARCA, 195 posiciones por línea."""
     lineas = []
     for codigo in sorted(set(codigos)):
-        c = concepto_arca(codigo)
+        c = concepto_arca(codigo, propios)
         marcas = "".join("0" if col is None else ("1" if col in c.bases else "0") for col in _COLUMNAS)
         linea = c.arca + _alfa(codigo, 10) + _alfa(c.descripcion, 150) + "0" + marcas + " " * 9
         assert len(linea) == 195, len(linea)
@@ -189,7 +199,7 @@ def bases(t: Trabajador) -> dict:
         if tipo == "descuento":
             continue
         bruta += importe
-        for n in {_BASE_DE[s] for s in concepto_arca(codigo).bases}:
+        for n in {_BASE_DE[s] for s in concepto_arca(codigo, t.propios).bases}:
             b[n] += importe
     for n in (4, 8):
         b[n] = (b[n] * t.factor_obra_social).quantize(Decimal("0.01"))
@@ -212,7 +222,7 @@ def _registros_03(t: Trabajador) -> list:
     for codigo, tipo, importe in t.conceptos:
         if not importe:
             continue
-        c = concepto_arca(codigo)
+        c = concepto_arca(codigo, t.propios)
         credito = tipo != "descuento" and importe > 0
         cantidad = t.cantidades.get(codigo, Decimal("0"))
         linea = ("03" + _cuit(t.cuil) + _alfa(codigo, 10) + _num(int(Decimal(cantidad) * 100), 5)

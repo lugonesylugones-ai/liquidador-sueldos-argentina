@@ -163,6 +163,7 @@ def liquidar_suteryh(
     tope_base_imponible: Decimal | None = None,
     zona_base: str = "remunerativo",
     antiguedad_completa: bool = False,
+    conceptos_extra=None,
 ) -> Liquidacion:
     """Un mes de un trabajador de edificio.
 
@@ -175,6 +176,8 @@ def liquidar_suteryh(
     `liquidar_zona_fria`. `zona_base`: "remunerativo" o "basico_antiguedad".
     `antiguedad_completa`: paga la antigüedad al 2% aunque el cargo sea de jornada reducida
     (mejora sobre el convenio que algunos consorcios vienen pagando).
+    `conceptos_extra(liq, dias)`: conceptos propios; van antes de las horas extra y la zona,
+    así un plus remunerativo habitual entra en el valor hora y en la base de la zona fría.
     """
     if cargo not in CARGO_POR_NOMBRE:
         raise ValueError(f"cargo desconocido: {cargo}")
@@ -247,6 +250,9 @@ def liquidar_suteryh(
         pct = adic["titulo_encargado_integral_pct"] * tramos_titulo / 2 / 100
         _agregar(liq, "TIT", "Título encargado integral", f"{_pct(pct)} s/ $ {pesos(basico_mes)}",
                  "remunerativo", basico_mes * pct)
+
+    if conceptos_extra:
+        conceptos_extra(liq, dias)
 
     if horas_50 or horas_100:
         habitual = sum((c.importe for c in liq.remunerativos() if c.codigo not in FUERA_VALOR_HORA), Decimal("0"))

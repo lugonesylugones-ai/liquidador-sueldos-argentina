@@ -36,7 +36,8 @@
     {% if empleados %}
     <div class="tabla"><table>
       <tr><th>Apellido y nombre</th><th>Categoría</th><th class="num">Jornada</th>
-          {% if tipo == 'mensual' %}<th>Faltas sin justificar</th><th>Horas extra 50% / 100%</th><th>Anticipo</th>{% endif %}</tr>
+          {% if tipo == 'mensual' %}<th>Faltas sin justificar</th><th>Horas extra 50% / 100%</th><th>Anticipo</th>
+          {% if cantidades.values()|select|list %}<th>Cantidades del mes</th>{% endif %}{% endif %}</tr>
       {% for e in empleados %}
       <tr><td>{{ e.apellido }}, {{ e.nombre }}</td><td>{{ e.categoria }}</td><td class="num">{{ e.jornada_horas }} hs</td>
           {% if tipo == 'mensual' %}
@@ -49,6 +50,10 @@
           <td class="muted">—</td>
           {% endif %}
           <td><input inputmode="decimal" name="anticipo_{{ e.id }}" placeholder="0" style="width:6.5rem" aria-label="Anticipo de haberes"></td>
+          {% if cantidades.values()|select|list %}<td>{% for c in cantidades[e.id] %}
+            <label class="check" style="font-size:.8rem">{{ c.codigo }}
+              <input inputmode="decimal" name="cantidad_{{ c.codigo }}_{{ e.id }}" placeholder="{{ c.cantidad|string|replace('.', ',') if c.cantidad else '0' }}" style="width:5rem" title="{{ c.descripcion }}"></label>
+          {% else %}<span class="muted">—</span>{% endfor %}</td>{% endif %}
           {% endif %}</tr>
       {% endfor %}
     </table></div>

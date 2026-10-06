@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block titulo %}Conceptos{% endblock %}
+{% block contenido %}
+<h1>Conceptos propios</h1>
+<p class="sub">Plus, premios, sumas no remunerativas o descuentos que no trae el convenio, con su fórmula.</p>
+<div class="aviso">Lo remunerativo paga todos los aportes; lo no remunerativo, según elijas, obra social y aportes
+  sindicales (en Comercio). Antes de usar un concepto nuevo en un F.931, revisá con el contador el código ARCA
+  y volvé a subir la "relación de conceptos" desde la empresa.</div>
+
+<section>
+  <h2>Cargados ({{ conceptos|length }})</h2>
+  {% if conceptos %}
+  <div class="tabla"><table>
+    <tr><th>Código</th><th>Descripción</th><th>Tipo</th><th>Cálculo</th><th>Para</th><th>ARCA</th><th></th></tr>
+    {% for c in conceptos %}
+    <tr class="{{ 'muted' if not c.activo }}">
+      <td>{{ c.codigo }}</td><td>{{ c.descripcion }}</td>
+      <td>{{ tipos[c.tipo] }}{% if c.tipo == 'no_remunerativo' and not c.aportes %} · sin aportes{% endif %}
+          {% if c.tipo != 'descuento' and not c.habitual %} · no habitual{% endif %}</td>
+      <td>{% if c.calculo == 'fijo' %}$ {{ c.valor|pesos }}{% if c.proporcional %} prop.{% endif %}
+          {% elif c.calculo == 'porcentaje' %}{{ c.valor }}% s/ {{ c.base|join(' + ') }}
+          {% elif c.calculo == 'cantidad' %}$ {{ c.valor|pesos }} × cantidad
+          {% else %}<code>{{ c.formula }}</code>{% endif %}</td>
+      <td>{% if c.automatico %}Todos{% if c.convenio %} de {{ c.convenio }}{% endif %}{% if c.empresa_id %} de {{ nombres_empresa[c.empresa_id] }}{% endif %}
+          {% else %}A quien se le asigne{% endif %}{% if not c.activo %} · <span class="chip">Inactivo</span>{% endif %}</td>
+      <td>{{ c.arca }}</td>
+      <td><a href="{{ url_for('web.conceptos', editar=c.codigo) }}#form">Editar</a></td>
+    </tr>{% endfor %}
+  </table></div>
+  {% else %}
+  <p class="muted">Todavía no cargaste ninguno.</p>
+  {% endif %}
+</section>
+
+{% set c = editar or {} %}
+<section id="form">
+  <h2>{{ 'Editar ' ~ c.codigo if editar else 'Nuevo concepto' }}</h2>
+  <form method="post" action="{{ url_for('web.guardar_concepto') }}">
+    <div class="grilla">
+      <label>Código (va en el recibo) <input name="codigo" required maxlength="10" value="{{ c.codigo or '' }}"
+             placeholder="PLUSVID" {% if editar %}readonly{% endif %} style="text-transform:uppercase"></label>
+      <label>Descripción <input name="descripcion" required maxlength="60" value="{{ c.descripcion or '' }}" placeholder="Plus vidriera"></label>
+      <label>Tipo <select name="tipo" id="tipo">
+        {% for k, v in tipos.items() %}<option value="{{ k }}"{% if c.tipo == k %} selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select></label>
+      <label>Cómo se calcula <select name="calculo" id="calculo">
+        {% for k, v in calculos.items() %}<option value="{{ k }}"{% if c.calculo == k %} selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select></label>
+    </div>
+    <div class="grilla" style="margin-top:12px">
+      <label class="calc fijo cantidad porcentaje" id="valor-label"><span id="valor-txt">Importe</span>
+        <input name="valor" inputmode="decimal" value="{{ c.valor if c.valor and c.valor != '0' else '' }}"></label>
+      <label class="calc porcentaje">Sobre (códigos separados por coma)
+        <input name="base" value="{{ (c.base or [])|join(', ') }}" placeholder="BAS, ANT"></label>
+      <label class="calc formula" style="grid-column: span 2">Fórmula
+        <input name="formula" value="{{ c.formula or '' }}" placeholder="(BAS + ANT) / 200 * 1.5 * CANTIDAD"></label>
+      <label>Código ARCA <input name="arca" required inputmode="numeric" maxlength="6" id="arca" value="{{ c.arca or '' }}"></label>
+      <label>Orden de cálculo <input type="number" name="orden" value="{{ c.orden or 100 }}"></label>
+    </div>
+    <div class="tareas">
+      <label class="check calc fijo"><input type="checkbox" name="proporcional" value="1"{% if c.proporcional is not defined or c.proporcional %} checked{% endif %}> Proporcional a la jornada y a los días del mes</label>
+      <label class="check haber"><input type="checkbox" name="habitual" value="1"{% if c.habitual is not defined or c.habitual %} checked{% endif %}> Habitual (cuenta para aguinaldo, vacaciones e indemnización)</label>
+      <label class="check nr"><input type="checkbox" name="aportes" value="1"{% if c.aportes is not defined or c.aportes %} checked{% endif %}> Paga obra social y aportes sindicales</label>
+      <input type="hidden" name="proporcional" value="0"><input type="hidden" name="habitual" value="0"><input type="hidden" name="aportes" value="0">
+    </div>
+    <fieldset>
+      <legend>A quién se le liquida</legend>
+      <div class="grilla">
+        <label>Se aplica <select name="automatico">
+          <option value="0">Solo a quien se lo asigne</option>
+          <option value="1"{% if c.automatico %} selected{% endif %}>A todos los del convenio y empresa</option>
+        </select></label>
+        <label>Convenio <select name="convenio">
+          <option value="">Cualquiera</option>
+          {% for v in convenios %}<option value="{{ v.codigo }}"{% if c.convenio == v.codigo %} selected{% endif %}>{{ v.codigo }}</option>{% endfor %}
+        </select></label>
+        <label>Empresa <select name="empresa_id">
+          <option value="">Todas</option>
+          {% for e in empresas %}<option value="{{ e.id }}"{% if c.empresa_id == e.id %} selected{% endif %}>{{ e.razon_social }}</option>{% endfor %}
+        </select></label>
+        <label>Estado <select name="activo">
+          <option value="1">Activo</option><option value="0"{% if editar and not c.activo %} selected{% endif %}>Inactivo (no se liquida más)</option>
+        </select></label>
+      </div>
+    </fieldset>
+    <div class="acciones">
+      <button>Guardar</button>
+      {% if editar %}<a class="boton sec" href="{{ url_for('web.conceptos') }}">Cancelar</a>{% endif %}
+    </div>
+  </form>
+  <details style="margin-top:14px"><summary>Qué se puede usar en la fórmula</summary>
+    <p class="muted">Los códigos de los conceptos del recibo (BAS sueldo básico, ANT antigüedad, PRES presentismo,
+      NR acuerdo no remunerativo, ADR suma fija de edificios, HE50/HE100 horas extra, y los de tus conceptos que van
+      antes en el orden), números con punto decimal, + − × / ( ) y min, max, abs, redondear. Además:</p>
+    <div class="tabla"><table>{% for k, v in variables.items() %}<tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>{% endfor %}</table></div>
+    <p class="muted">Los descuentos se calculan después de los aportes, así que pueden usar JUB, OS, etc.</p>
+  </details>
+</section>
+
+<script>
+  const tipo = document.getElementById("tipo"), calc = document.getElementById("calculo");
+  const arca = document.getElementById("arca"), txt = document.getElementById("valor-txt");
+  const sugerido = {remunerativo: "160000", no_remunerativo: "540000", descuento: "820000"};
+  function mostrar() {
+    document.querySelectorAll(".calc").forEach(el => { el.hidden = !el.classList.contains(calc.value); });
+    document.querySelectorAll(".haber").forEach(el => { el.hidden = tipo.value === "descuento"; });
+    document.querySelectorAll(".nr").forEach(el => { el.hidden = tipo.value !== "no_remunerativo"; });
+    txt.textContent = {fijo: "Importe por mes", cantidad: "Valor por unidad", porcentaje: "Porcentaje"}[calc.value] || "Valor";
+  }
+  tipo.addEventListener("change", () => {
+    if (!arca.value || Object.values(sugerido).includes(arca.value)) arca.value = sugerido[tipo.value];
+    mostrar();
+  });
+  calc.addEventListener("change", mostrar);
+  if (!arca.value) arca.value = sugerido[tipo.value];
+  mostrar();
+</script>
+{% endblock %}
