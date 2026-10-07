@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS datos_arca (
     empresa_id INTEGER PRIMARY KEY REFERENCES empresas(id),
     tipo_empleador TEXT NOT NULL,     -- tabla "Tipos de empleador" de Declaración en Línea
     actividad TEXT NOT NULL,          -- tabla "Actividades"
-    zona TEXT NOT NULL                -- tabla "Localidades / zonas"
+    zona TEXT NOT NULL,               -- tabla "Localidades / zonas"
+    codigos TEXT                      -- JSON: código del liquidador -> código de concepto del empleador
 );
 
 -- Períodos ya presentados (F.931): no se pueden volver a liquidar sin reabrirlos.
@@ -128,6 +129,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrar_tipo_final(conn)
     _migrar_extras(conn)
     _migrar_zona(conn)
+    _migrar_codigos_arca(conn)
     conn.commit()
 
 
@@ -139,6 +141,12 @@ def _migrar_zona(conn: sqlite3.Connection) -> None:
                      "CHECK (zona_base IN ('remunerativo', 'basico_antiguedad'))")
     if "zona_recibo_aparte" not in columnas:
         conn.execute("ALTER TABLE edificios ADD COLUMN zona_recibo_aparte INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrar_codigos_arca(conn: sqlite3.Connection) -> None:
+    """Bases creadas antes de los códigos de concepto del contador."""
+    if "codigos" not in {r["name"] for r in conn.execute("PRAGMA table_info(datos_arca)")}:
+        conn.execute("ALTER TABLE datos_arca ADD COLUMN codigos TEXT")
 
 
 def _migrar_extras(conn: sqlite3.Connection) -> None:

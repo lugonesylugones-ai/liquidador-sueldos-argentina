@@ -105,8 +105,9 @@ def test_embargo_con_minimo_y_recibo_de_zona_fria(client):
 
     # El archivo para ARCA lleva el embargo como "otros descuentos".
     txt = client.get(f"/api/empresas/{e}/arca/2026-09.txt?tipo=mensual").data.decode()
-    assert any(l[:2] == "03" and l[13:23].strip() == "DEMB" and l[44] == "D" for l in txt.split("\r\n"))
-    assert "DEMB" in client.get(f"/api/empresas/{e}/arca/conceptos.txt").data.decode("cp1252")
+    # (con el código del contador de los consorcios para el embargo)
+    assert any(l[:2] == "03" and l[13:23].strip() == "04060" and l[44] == "D" for l in txt.split("\r\n"))
+    assert "04060" in client.get(f"/api/empresas/{e}/arca/conceptos.txt").data.decode("cp1252")
 
 
 @pytest.mark.parametrize("descuento, error", [

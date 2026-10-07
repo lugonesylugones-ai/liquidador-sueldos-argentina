@@ -63,8 +63,12 @@
       <div class="grilla" style="margin-top:10px">
         <label>Tipo de empleador <input name="tipo_empleador" maxlength="1" required value="{{ arca.tipo_empleador }}" title="1 = Dec. 814/01 art. 2 inc. b"></label>
         <label>Actividad <input name="actividad" maxlength="3" required value="{{ arca.actividad }}"></label>
-        <label>Zona <input name="zona" maxlength="2" required value="{{ arca.zona }}" title="04 = Resto de Buenos Aires"></label>
+        <label>Zona <input name="zona" maxlength="2" required value="{{ arca.zona }}" title="01, como los archivos del contador"></label>
       </div>
+      <label style="display:block; margin-top:10px">Códigos de concepto del contador (uno por renglón, CONCEPTO=CÓDIGO)
+        <textarea name="codigos" rows="4" placeholder="ANT=01002&#10;HE100=01012">{% for k, v in arca.codigos_propios.items() %}{{ k }}={{ v }}
+{% endfor %}</textarea></label>
+      {% if arca.codigos %}<p class="muted" style="margin:4px 0 0">En uso: {% for k, v in arca.codigos.items() %}{{ k }}={{ v }}{% if not loop.last %} · {% endif %}{% endfor %}. Lo que cargues arriba pisa estos.</p>{% endif %}
       <div class="acciones"><button>Guardar códigos</button>
         <span class="muted">Revisalos contra tu último F.931.</span></div>
     </form>
