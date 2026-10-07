@@ -9,6 +9,12 @@ https://www.arca.gob.ar/LibrodeSueldosDigital (ayuda > Diseños):
 - Liquidación ("Diseño de interfaz - liquidación"): un registro '01' del envío y, por trabajador,
   un '02' (datos del pago), un '03' por concepto del recibo y un '04' (datos para el F.931 con
   las nueve bases imponibles más la 10). Se sube en "Liquidaciones > Importar desde archivo".
+  Va una liquidación por recibo (el sueldo es la 1; la zona fría aparte, la 2...): ARCA suma
+  las bases de todas para el F.931.
+
+El formato copia el de los TXT que arma el contador de los consorcios y que ARCA aceptó (sep-2026):
+el '04' informa solo las bases y deja en cero los códigos que ARCA completa con los datos de
+Simplificación Registral (convenio, condición, actividad, modalidad, días, base 10 y detracción).
 """
 from dataclasses import dataclass, field
 from datetime import date
@@ -100,18 +106,20 @@ CONCEPTOS = {
     "DOTR": ConceptoArca("820000", "Otro descuento", SIN_BASE),
 }
 
-# Detracción de la base de contribuciones (art. 22 Ley 27.541) por trabajador de jornada completa;
-# en jornada parcial, proporcional a las horas. El F.931 de 09/2026 la aplica así (3 × 5.836,40).
-DETRACCION_LEY_27541 = Decimal("7003.68")
-
-# Valores por defecto del registro '04' (tablas de Declaración en Línea).
+# Valores por defecto del registro '04', los de los TXT del contador.
 TIPO_EMPLEADOR = "1"        # Dec. 814/01 art. 2 inc. b) (contribuciones al 18%)
-ACTIVIDAD = "049"
-ZONA = "04"                 # Resto de Buenos Aires (Bahía Blanca)
-CONDICION = "01"            # Servicios comunes, mayor de 18 años
+ACTIVIDAD = "000"           # en cero: ARCA usa la de la nómina
+ZONA = "01"
 SITUACION_ACTIVO = "01"
-MODALIDAD_COMPLETA = "008"  # Tiempo completo indeterminado
-MODALIDAD_PARCIAL = "001"   # Tiempo parcial indeterminado
+
+# Códigos de concepto del contador para los consorcios (los que ya están parametrizados en ARCA
+# para esas CUIT). Cambian algo de un consorcio a otro: cada empresa puede pisarlos.
+CODIGOS_CONTADOR_SUTERYH = {
+    "BAS": "1000", "ANT": "1001", "RES": "1003", "COCH": "01004", "JARD": "01005", "VIAT": "01200",
+    "HE100": "1010", "HE50": "1011", "ZONA": "1016", "ADR": "1995", "JUB": "4001", "PAMI": "4002",
+    "OS": "4003", "SIND": "4004", "CPF": "4006", "FMVDD": "04007", "DMUT": "04008", "A27B": "04010",
+    "DEMB": "04060", "RED": "5998",
+}
 OBRA_SOCIAL = {"CCT 130/75": "126205", "CCT 589/10": "106401"}   # OSECAC / OSPERYH
 
 
@@ -128,13 +136,13 @@ class Trabajador:
     obra_social: str
     fecha_pago: date
     conceptos: list                     # Concepto del liquidador (código, tipo, importe), ya sumados
-    dias_trabajados: int = 30
     factor_obra_social: Decimal = Decimal("1")   # jornada parcial con OS sobre jornada completa
     conyuge: bool = False
     hijos: int = 0
     cbu: str = ""
     cantidades: dict = field(default_factory=dict)   # código -> cantidad (horas, días)
     propios: dict = field(default_factory=dict)      # conceptos del usuario: código -> ConceptoArca
+    codigos: dict = field(default_factory=dict)      # código del liquidador -> código del empleador
 
 
 def _alfa(valor: str, largo: int) -> str:
@@ -179,34 +187,38 @@ def bases_propio(tipo: str, aportes: bool) -> frozenset:
     return NR_OS if tipo == "no_remunerativo" and aportes else SIN_BASE
 
 
-def archivo_conceptos(codigos, propios: dict | None = None) -> str:
-    """Relación conceptos del empleador - ARCA, 195 posiciones por línea."""
-    lineas = []
+def archivo_conceptos(codigos, propios: dict | None = None, mapa: dict | None = None) -> str:
+    """Relación conceptos del empleador - ARCA, 195 posiciones por línea. `mapa`: código del
+    liquidador -> código del empleador (si dos van al mismo código, se informa una vez)."""
+    lineas, informados = [], set()
     for codigo in sorted(set(codigos)):
         c = concepto_arca(codigo, propios)
+        propio = (mapa or {}).get(codigo, codigo)
+        if propio in informados:
+            continue
+        informados.add(propio)
         marcas = "".join("0" if col is None else ("1" if col in c.bases else "0") for col in _COLUMNAS)
-        linea = c.arca + _alfa(codigo, 10) + _alfa(c.descripcion, 150) + "0" + marcas + " " * 9
+        linea = c.arca + _alfa(propio, 10) + _alfa(c.descripcion, 150) + "0" + marcas + " " * 9
         assert len(linea) == 195, len(linea)
         lineas.append(linea)
     return "\r\n".join(lineas) + "\r\n"
 
 
 def bases(t: Trabajador) -> dict:
-    """Las bases imponibles 1 a 10, la remuneración bruta y la detracción del trabajador."""
+    """Las bases imponibles 1 a 9 y la remuneración bruta del trabajador (sin el redondeo del neto,
+    como el contador)."""
     b = {n: Decimal("0") for n in range(1, 10)}
     bruta = Decimal("0")
     for codigo, tipo, importe in t.conceptos:
         if tipo == "descuento":
             continue
-        bruta += importe
+        if codigo != "RED":
+            bruta += importe
         for n in {_BASE_DE[s] for s in concepto_arca(codigo, t.propios).bases}:
             b[n] += importe
     for n in (4, 8):
         b[n] = (b[n] * t.factor_obra_social).quantize(Decimal("0.01"))
-    detraccion = (DETRACCION_LEY_27541 * min(t.jornada_horas, 8) / 8).quantize(Decimal("0.01"))
-    detraccion = min(detraccion, b[3])
-    b[10] = b[3] - detraccion
-    return {"bases": b, "bruta": bruta, "detraccion": detraccion}
+    return {"bases": b, "bruta": bruta}
 
 
 def _registro_02(t: Trabajador) -> str:
@@ -218,15 +230,23 @@ def _registro_02(t: Trabajador) -> str:
 
 
 def _registros_03(t: Trabajador) -> list:
-    lineas = []
+    """Un '03' por código del empleador (dos conceptos con el mismo código se suman). Cantidad: la que
+    trae el concepto (años de antigüedad, horas, % del descuento); unidad en blanco salvo días."""
+    sumas = {}
     for codigo, tipo, importe in t.conceptos:
         if not importe:
             continue
         c = concepto_arca(codigo, t.propios)
         credito = tipo != "descuento" and importe > 0
-        cantidad = t.cantidades.get(codigo, Decimal("0"))
-        linea = ("03" + _cuit(t.cuil) + _alfa(codigo, 10) + _num(int(Decimal(cantidad) * 100), 5)
-                 + _alfa(c.unidades if cantidad else "", 1) + _importe(importe)
+        clave = (t.codigos.get(codigo, codigo), credito)
+        cantidad, unidad = Decimal(t.cantidades.get(codigo, 0)), c.unidades if c.unidades == "D" else ""
+        anterior = sumas.get(clave)
+        sumas[clave] = (anterior[0] + importe if anterior else importe,
+                        anterior[1] if anterior else cantidad, anterior[2] if anterior else unidad)
+    lineas = []
+    for (codigo, credito), (importe, cantidad, unidad) in sorted(sumas.items(), key=lambda x: x[0][0]):
+        linea = ("03" + _cuit(t.cuil) + _alfa(codigo, 10) + _num(int(cantidad * 100), 5)
+                 + _alfa(unidad if cantidad else "", 1) + _importe(importe)
                  + ("C" if credito else "D") + " " * 6)
         assert len(linea) == 51, len(linea)
         lineas.append(linea)
@@ -236,15 +256,13 @@ def _registros_03(t: Trabajador) -> list:
 def _registro_04(t: Trabajador, *, tipo_empleador: str, actividad: str, zona: str) -> str:
     d = bases(t)
     b = d["bases"]
-    modalidad = MODALIDAD_COMPLETA if t.jornada_horas >= 8 else MODALIDAD_PARCIAL
     linea = ("04" + _cuit(t.cuil) + ("1" if t.conyuge else "0") + _num(t.hijos, 2)
-             + "1"            # trabajador en convenio colectivo
-             + "1"            # cubierto por el seguro colectivo de vida obligatorio
-             + "0"            # no corresponde reducción
-             + _alfa(tipo_empleador, 1) + "0" + SITUACION_ACTIVO + CONDICION + _alfa(actividad, 3)
-             + modalidad + "00" + _alfa(zona, 2)
+             + "000"          # convenio, seguro de vida y reducción: en cero, como el contador
+             + _alfa(tipo_empleador, 1) + "0" + SITUACION_ACTIVO
+             + "00" + _alfa(actividad, 3) + "000"                         # condición, actividad, modalidad
+             + "00" + _alfa(zona, 2)
              + SITUACION_ACTIVO + "01" + "00" + "00" + "00" + "00"       # situación de revista 1 a 3
-             + _num(t.dias_trabajados, 2) + _num(0, 3)
+             + "00" + _num(0, 3)                                          # días y horas: en cero
              + _importe(Decimal("0"), 5) + _importe(Decimal("0"), 5)      # % aporte adicional / tarea dif.
              + _alfa(t.obra_social, 6) + _num(0, 2)
              + _importe(Decimal("0")) * 5                                  # adicionales OS y bases dif.
@@ -252,7 +270,7 @@ def _registro_04(t: Trabajador, *, tipo_empleador: str, actividad: str, zona: st
              + _importe(d["bruta"])
              + "".join(_importe(b[n]) for n in range(1, 10))
              + _importe(Decimal("0")) * 2                                  # bases dif. de seg. social
-             + _importe(b[10]) + _importe(d["detraccion"]))
+             + _importe(Decimal("0")) * 2)                                # base 10 y detracción: ARCA
     assert len(linea) == 370, len(linea)
     return linea
 

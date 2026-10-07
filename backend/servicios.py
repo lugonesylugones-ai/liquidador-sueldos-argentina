@@ -4,6 +4,7 @@ Cada función recibe la conexión y un dict con los datos (JSON o formulario) y
 lanza `ErrorDatos` con un mensaje para el usuario si algo no cierra.
 """
 import json
+import re
 import sqlite3
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -869,11 +870,42 @@ def _descontar(conn, emp, liq: Liquidacion, d: dict) -> None:
 
 
 # --- ARCA: Libro de Sueldos Digital y F.931 ------------------------------------
+def _convenio_unico(conn, empresa_id: int) -> str | None:
+    convenios_ = {r["convenio"] for r in conn.execute("SELECT DISTINCT convenio FROM empleados WHERE empresa_id = ?",
+                                                      (empresa_id,))}
+    return convenios_.pop() if len(convenios_) == 1 else None
+
+
 def datos_arca(conn, empresa_id: int) -> dict:
-    """Códigos del empleador para el F.931; si no se cargaron, los valores por defecto."""
+    """Códigos del empleador para el F.931; si no se cargaron, los valores por defecto. `codigos`:
+    código del liquidador -> código de concepto del empleador en ARCA (los del contador en los
+    consorcios, con lo que cargó cada empresa encima); `codigos_propios`, solo lo cargado."""
     r = conn.execute("SELECT * FROM datos_arca WHERE empresa_id = ?", (empresa_id,)).fetchone()
     por_defecto = {"tipo_empleador": arca.TIPO_EMPLEADOR, "actividad": arca.ACTIVIDAD, "zona": arca.ZONA}
-    return {**por_defecto, **({k: r[k] for k in por_defecto} if r else {}), "cargados": r is not None}
+    propios = json.loads(r["codigos"]) if r and r["codigos"] else {}
+    base = arca.CODIGOS_CONTADOR_SUTERYH if _convenio_unico(conn, empresa_id) == CONVENIO_SUTERYH else {}
+    return {**por_defecto, **({k: r[k] for k in por_defecto} if r else {}), "cargados": r is not None,
+            "codigos": {**base, **propios}, "codigos_propios": propios}
+
+
+def _codigos_arca(texto) -> dict:
+    """'BAS=1000' por renglón (o un dict de la API) -> {'BAS': '1000'}."""
+    if isinstance(texto, dict):
+        pares = texto.items()
+    else:
+        pares = []
+        for renglon in str(texto or "").replace(",", "\n").splitlines():
+            if renglon.strip():
+                if "=" not in renglon:
+                    raise ErrorDatos(f"Cada código va como CONCEPTO=CÓDIGO (ej. BAS=1000), no '{renglon.strip()}'")
+                pares.append(renglon.split("=", 1))
+    out = {}
+    for nuestro, suyo in pares:
+        nuestro, suyo = str(nuestro).strip().upper(), str(suyo).strip()
+        if not suyo or len(suyo) > 10 or not suyo.isalnum():
+            raise ErrorDatos(f"El código de {nuestro} tiene que ser de 1 a 10 letras o números")
+        out[nuestro] = suyo
+    return out
 
 
 def guardar_datos_arca(conn, empresa_id: int, d: dict) -> None:
@@ -885,11 +917,13 @@ def guardar_datos_arca(conn, empresa_id: int, d: dict) -> None:
         if not valor.isdigit() or len(valor) > largo:
             raise ErrorDatos(f"'{campo}' tiene que ser un código de hasta {largo} dígitos")
         valores[campo] = valor.zfill(largo)
+    codigos = _codigos_arca(d.get("codigos"))
     conn.execute(
-        """INSERT INTO datos_arca (empresa_id, tipo_empleador, actividad, zona) VALUES (?, ?, ?, ?)
+        """INSERT INTO datos_arca (empresa_id, tipo_empleador, actividad, zona, codigos) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT (empresa_id) DO UPDATE SET tipo_empleador = excluded.tipo_empleador,
-             actividad = excluded.actividad, zona = excluded.zona""",
-        (empresa_id, valores["tipo_empleador"], valores["actividad"], valores["zona"]))
+             actividad = excluded.actividad, zona = excluded.zona, codigos = excluded.codigos""",
+        (empresa_id, valores["tipo_empleador"], valores["actividad"], valores["zona"],
+         json.dumps(codigos) if codigos else None))
     conn.commit()
 
 
@@ -916,18 +950,28 @@ def _extras_arca(d: dict) -> dict:
     return datos
 
 
-def _conceptos_del_periodo(conn, emp, periodo_: str) -> tuple[list, dict, date, int]:
-    """Suma por código los conceptos de todos los recibos del trabajador en el período
-    (sueldo, zona fría aparte, aguinaldo, liquidación final): el F.931 es uno por mes."""
-    filas = conn.execute("SELECT tipo, fecha_pago, resultado FROM liquidaciones WHERE empleado_id = ? "
-                         "AND periodo = ?", (emp["id"], periodo_)).fetchall()
-    sumas, cantidades, dias = {}, {}, 30
+# Una liquidación del Libro de Sueldos Digital por recibo, numeradas en este orden dentro del mes.
+# El sueldo y la liquidación final van juntos: un trabajador tiene uno u otro.
+LIQUIDACIONES_ARCA = ((("mensual", "final"), "sueldos"), (("zona_fria",), "zona_fria"),
+                      (("sac",), "aguinaldo"), (("sac_zona_fria",), "aguinaldo_zona_fria"))
+
+
+# Cantidades fijas que pone el contador en los '03' (básico 1,00; retiro de residuos 30,00).
+CANTIDADES_CONTADOR = {"BAS": Decimal("1"), "RES": Decimal("30")}
+
+
+def _conceptos_del_periodo(conn, emp, periodo_: str, tipos) -> tuple[list, dict, date] | None:
+    """Suma por código los conceptos de los recibos del trabajador de esos tipos en el período."""
+    filas = conn.execute(f"SELECT tipo, fecha_pago, resultado FROM liquidaciones WHERE empleado_id = ? "
+                         f"AND periodo = ? AND tipo IN ({', '.join('?' * len(tipos))})",
+                         (emp["id"], periodo_, *tipos)).fetchall()
+    if not filas:
+        return None
+    sumas, cantidades = {}, {}
     pago = max(date.fromisoformat(f["fecha_pago"]) for f in filas)
     mes = int(periodo_[5:])
     for f in filas:
         liq = Liquidacion.from_dict(json.loads(f["resultado"])["liquidacion"])
-        if f["tipo"] in ("mensual", "final"):
-            dias = min(liq.dias_trabajados, 30)
         for c in liq.conceptos:
             codigo = c.codigo
             if codigo == "SAC" and (f["tipo"] == "final" or mes not in (6, 12)):
@@ -939,10 +983,19 @@ def _conceptos_del_periodo(conn, emp, periodo_: str) -> tuple[list, dict, date, 
             if codigo in ("HE50", "HE100"):
                 cantidades[codigo] = cantidades.get(codigo, Decimal("0")) + Decimal(
                     c.detalle.split()[0].replace(",", "."))
+            # Como el contador: los años de antigüedad y el porcentaje de cada descuento.
+            anios = re.match(r"(\d+) años? ", c.detalle or "")
+            if codigo.startswith("ANT") and anios:
+                cantidades[codigo] = int(anios.group(1))
+            pct = re.match(r"(\d+(?:,\d+)?)% s/", c.detalle or "")
+            if c.tipo == "descuento" and pct and codigo != "DEMB":   # el embargo lo informa sin %
+                cantidades[codigo] = Decimal(pct.group(1).replace(",", "."))
+            if codigo in CANTIDADES_CONTADOR:
+                cantidades[codigo] = CANTIDADES_CONTADOR[codigo]
             clave = (codigo, c.tipo)
             sumas[clave] = sumas.get(clave, Decimal("0")) + c.importe
     conceptos = [(codigo, tipo, importe) for (codigo, tipo), importe in sumas.items()]
-    return conceptos, cantidades, pago, dias
+    return conceptos, cantidades, pago
 
 
 def _dias_sac(emp, periodo_: str, liq: Liquidacion) -> int:
@@ -952,37 +1005,53 @@ def _dias_sac(emp, periodo_: str, liq: Liquidacion) -> int:
     return (hasta - desde).days + 1
 
 
-def archivo_arca(conn, empresa_id: int, periodo_: str) -> tuple[str, str]:
-    """TXT de la liquidación del período para importar en el Libro de Sueldos Digital."""
+def archivos_arca(conn, empresa_id: int, periodo_: str, tipo: str | None = None) -> list[tuple[str, str]]:
+    """TXT del período para importar en el Libro de Sueldos Digital: uno por liquidación (sueldos,
+    zona fría aparte, aguinaldo), numerados 1, 2... `tipo`: solo la liquidación de ese tipo de recibo."""
     emp_empresa = empresa(conn, empresa_id)
     if emp_empresa is None:
         raise ErrorDatos("La empresa no existe")
-    trabajadores = []
-    for emp in conn.execute(
-            """SELECT DISTINCT e.* FROM empleados e JOIN liquidaciones l ON l.empleado_id = e.id
-               WHERE e.empresa_id = ? AND l.periodo = ? ORDER BY e.apellido, e.nombre""",
-            (empresa_id, periodo_)):
-        conceptos, cantidades, pago, dias = _conceptos_del_periodo(conn, emp, periodo_)
-        datos = arca_empleado(emp)
-        # Comercio en jornada parcial: la obra social va sobre la jornada completa (art. 92 ter LCT).
-        factor = (Decimal(8) / emp["jornada_horas"]
-                  if emp["convenio"] == CONVENIO_COMERCIO and emp["jornada_horas"] < 8 else Decimal("1"))
-        trabajadores.append(arca.Trabajador(
-            cuil=emp["cuil"], legajo=emp["legajo"] or "", jornada_horas=emp["jornada_horas"],
-            obra_social=datos["obra_social"], fecha_pago=pago, conceptos=conceptos, dias_trabajados=dias,
-            factor_obra_social=factor, conyuge=datos["conyuge"], hijos=datos["hijos"], cbu=datos["cbu"],
-            cantidades=cantidades, propios=_propios_arca(conn, emp["convenio"])))
-    if not trabajadores:
-        raise ErrorDatos(f"No hay recibos liquidados en {periodo_}")
+    empleados_ = conn.execute(
+        """SELECT DISTINCT e.* FROM empleados e JOIN liquidaciones l ON l.empleado_id = e.id
+           WHERE e.empresa_id = ? AND l.periodo = ? ORDER BY e.apellido, e.nombre""",
+        (empresa_id, periodo_)).fetchall()
     codigos = datos_arca(conn, empresa_id)
-    try:
-        texto = arca.archivo_liquidacion(
-            cuit_empleador=emp_empresa["cuit"], periodo=periodo_, trabajadores=trabajadores,
-            tipo_empleador=codigos["tipo_empleador"], actividad=codigos["actividad"], zona=codigos["zona"])
-    except arca.ErrorArca as exc:
-        raise ErrorDatos(str(exc))
     cuit_ = "".join(c for c in emp_empresa["cuit"] if c.isdigit())
-    return texto, f"LSD_{cuit_}_{periodo_.replace('-', '')}.txt"
+    archivos = []
+    for tipos, nombre in LIQUIDACIONES_ARCA:
+        trabajadores = []
+        for emp in empleados_:
+            del_periodo = _conceptos_del_periodo(conn, emp, periodo_, tipos)
+            if del_periodo is None:
+                continue
+            conceptos, cantidades, pago = del_periodo
+            datos = arca_empleado(emp)
+            # Comercio en jornada parcial: la obra social va sobre la jornada completa (art. 92 ter LCT).
+            factor = (Decimal(8) / emp["jornada_horas"]
+                      if emp["convenio"] == CONVENIO_COMERCIO and emp["jornada_horas"] < 8 else Decimal("1"))
+            trabajadores.append(arca.Trabajador(
+                cuil=emp["cuil"], legajo=emp["legajo"] or "", jornada_horas=emp["jornada_horas"],
+                obra_social=datos["obra_social"], fecha_pago=pago, conceptos=conceptos,
+                factor_obra_social=factor, conyuge=datos["conyuge"], hijos=datos["hijos"], cbu=datos["cbu"],
+                cantidades=cantidades, propios=_propios_arca(conn, emp["convenio"]), codigos=codigos["codigos"]))
+        if not trabajadores:
+            continue
+        numero = len(archivos) + 1
+        try:
+            texto = arca.archivo_liquidacion(
+                cuit_empleador=emp_empresa["cuit"], periodo=periodo_, trabajadores=trabajadores, numero=numero,
+                tipo_empleador=codigos["tipo_empleador"], actividad=codigos["actividad"], zona=codigos["zona"])
+        except arca.ErrorArca as exc:
+            raise ErrorDatos(str(exc))
+        nombre_archivo = f"LSD_{cuit_}_{periodo_.replace('-', '')}_{numero}_{nombre}.txt"
+        archivos.append((texto, nombre_archivo, tipos))
+    if not archivos:
+        raise ErrorDatos(f"No hay recibos liquidados en {periodo_}")
+    if tipo is not None:
+        archivos = [a for a in archivos if tipo in a[2]]
+        if not archivos:
+            raise ErrorDatos(f"No hay recibos de ese tipo en {periodo_}")
+    return [(texto, nombre_archivo) for texto, nombre_archivo, _ in archivos]
 
 
 def archivo_conceptos_arca(conn, empresa_id: int) -> tuple[str, str]:
@@ -991,12 +1060,11 @@ def archivo_conceptos_arca(conn, empresa_id: int) -> tuple[str, str]:
     if emp_empresa is None:
         raise ErrorDatos("La empresa no existe")
     cuit_ = "".join(c for c in emp_empresa["cuit"] if c.isdigit())
-    convenios_ = {r["convenio"] for r in conn.execute("SELECT DISTINCT convenio FROM empleados WHERE empresa_id = ?",
-                                                      (empresa_id,))}
-    convenio = CONVENIO_SUTERYH if convenios_ == {CONVENIO_SUTERYH} else None
+    convenio = CONVENIO_SUTERYH if _convenio_unico(conn, empresa_id) == CONVENIO_SUTERYH else None
     propios = {k: v for k, v in _propios_arca(conn, convenio).items()
                if concepto_propio(conn, k)["empresa_id"] in (None, empresa_id)}
-    return (arca.archivo_conceptos(list(arca.CONCEPTOS) + list(propios), propios),
+    return (arca.archivo_conceptos(list(arca.CONCEPTOS) + list(propios), propios,
+                                   datos_arca(conn, empresa_id)["codigos"]),
             f"LSD_conceptos_{cuit_}.txt")
 
 

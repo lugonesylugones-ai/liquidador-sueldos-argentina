@@ -1,5 +1,7 @@
 """Archivos para el Libro de Sueldos Digital de ARCA (F.931): formato y bases imponibles."""
 from decimal import Decimal
+from io import BytesIO
+from zipfile import ZipFile
 
 import pytest
 
@@ -45,7 +47,7 @@ def _comercio(client) -> int:
 def test_archivo_de_liquidacion_comercio(client):
     e = _comercio(client)
     r = client.get(f"/api/empresas/{e}/arca/2026-09.txt")
-    assert r.status_code == 200 and "LSD_30712345671_202609.txt" in r.headers["Content-Disposition"]
+    assert r.status_code == 200 and "LSD_30712345671_202609_1_sueldos.txt" in r.headers["Content-Disposition"]
     lineas = r.data.decode("cp1252").split("\r\n")[:-1]
     assert all(len(l) == LARGOS[l[:2]] for l in lineas)
     assert lineas[0] == "01" + "30712345671" + "SJ" + "202609" + "M" + "00001" + "30" + "000002"
@@ -56,21 +58,28 @@ def test_archivo_de_liquidacion_comercio(client):
     for linea in regs04:
         b = _bases(linea)
         completa = linea[2:13] == "20222222223"
-        assert linea[28:31] == ("008" if completa else "001")          # modalidad de contratación
+        # Como el contador: solo las bases; convenio, condición, modalidad, días, base 10 y
+        # detracción van en cero (ARCA los completa con la nómina).
+        assert linea[13:47] == "0" * 6 + "1" + "0" + "01" + "00" + "000" + "000" + "00" + "01" + "0101" + "0" * 8
+        assert linea[47:52] == "00000"
         assert linea[62:68] == "126205"                                 # OSECAC por defecto
         assert b[1] == b[2] == b[3] == b[5]                             # remunerativo
         assert b[9] > b[1]                                              # ART también sobre el no rem.
         # Obra social sobre la jornada completa en la jornada parcial (como el F.931 real).
         assert b[4] == b[8] == (b[9] if completa else b[9] * 2)
-        assert b["detraccion"] == (Decimal("7003.68") if completa else Decimal("3501.84"))
-        assert b[10] == b[3] - b["detraccion"]
+        assert b["detraccion"] == b[10] == 0
 
-    # Los '03' de cada trabajador suman la remuneración bruta del '04' (haberes a crédito).
+    # Los '03' de cada trabajador suman la remuneración bruta del '04' (haberes a crédito, sin el
+    # redondeo del neto, como el contador).
     for linea in regs04:
         cuil = linea[2:13]
         haberes = sum((_importe(l, 30, 44) * (1 if l[44] == "C" else -1)) for l in lineas
-                      if l[:2] == "03" and l[2:13] == cuil and arca.CONCEPTOS[l[13:23].strip()].arca < "8")
+                      if l[:2] == "03" and l[2:13] == cuil and l[13:23].strip() != "RED"
+                      and arca.CONCEPTOS[l[13:23].strip()].arca < "8")
         assert haberes == _bases(linea)["bruta"]
+    # Cantidades como el contador: años de antigüedad y porcentaje de cada descuento.
+    cant = {l[13:23].strip(): l[23:29] for l in lineas if l[:2] == "03" and l[2:13] == "20222222223"}
+    assert cant["ANT"] == "01100 " and cant["JUB"] == "01100 " and cant["FAECYS"] == "00050 "
     assert liqs
 
 
@@ -86,7 +95,8 @@ def test_conceptos_y_datos_del_empleador(client):
 
     assert client.get(f"/api/empresas/{e}/arca").json["cargados"] is False
     r = client.put(f"/api/empresas/{e}/arca", json={"tipo_empleador": "1", "actividad": "49", "zona": "4"})
-    assert r.json == {"tipo_empleador": "1", "actividad": "049", "zona": "04", "cargados": True}
+    assert r.json == {"tipo_empleador": "1", "actividad": "049", "zona": "04", "cargados": True,
+                      "codigos": {}, "codigos_propios": {}}
     linea = next(l for l in client.get(f"/api/empresas/{e}/arca/2026-09.txt").data.decode().split("\r\n")
                  if l[:2] == "04")
     assert linea[19] == "1" and linea[25:28] == "049" and linea[33:35] == "04"
@@ -114,6 +124,12 @@ def test_datos_del_trabajador_desde_la_web(client):
     assert 'value="104306"' in pagina and "Exportar Libro de Sueldos Digital" in pagina
 
 
+def _zip(respuesta) -> dict:
+    assert respuesta.status_code == 200 and respuesta.mimetype == "application/zip"
+    with ZipFile(BytesIO(respuesta.data)) as z:
+        return {n: z.read(n).decode("cp1252").split("\r\n")[:-1] for n in z.namelist()}
+
+
 def test_encargado_con_horas_extra_y_zona_aparte(client):
     r = client.post("/empresas/nueva", data={"razon_social": "Consorcio X", "cuit": "30712345671",
                                              "domicilio": "Calle 1", "lugar_pago": "Bahía Blanca"})
@@ -128,16 +144,49 @@ def test_encargado_con_horas_extra_y_zona_aparte(client):
     r = client.post(f"/empresas/{e}/liquidar", data={**PAGO, "tipo": "mensual", "periodo": "2026-09",
                                                      f"horas_50_{emp['id']}": "10"}, follow_redirects=True)
     assert "Listo: 1 recibos" in r.text
-    lineas = client.get(f"/api/empresas/{e}/arca/2026-09.txt").data.decode().split("\r\n")[:-1]
-    assert all(len(l) == LARGOS[l[:2]] for l in lineas)
-    he = next(l for l in lineas if l[13:23].strip() == "HE50")
-    assert he[23:29] == "01000H"
-    # La zona fría del recibo aparte va en el mismo envío, sumada al sueldo del mes.
-    assert any(l[13:23].strip() == "ZONA" for l in lineas)
-    b = _bases(next(l for l in lineas if l[:2] == "04"))
-    assert b[1] == b[4] == b[8] == b[9] == b["bruta"] - sum(
-        _importe(l, 30, 44) for l in lineas if l[13:23].strip() == "RED")
-    assert next(l for l in lineas if l[:2] == "04")[62:68] == "106401"   # OSPERYH
+
+    # Como los TXT reales de los consorcios: el sueldo es la liquidación 1 y la zona fría aparte, la 2.
+    archivos = _zip(client.get(f"/api/empresas/{e}/arca/2026-09.txt"))
+    assert sorted(archivos) == ["LSD_30712345671_202609_1_sueldos.txt", "LSD_30712345671_202609_2_zona_fria.txt"]
+    sueldo, zona = archivos["LSD_30712345671_202609_1_sueldos.txt"], archivos["LSD_30712345671_202609_2_zona_fria.txt"]
+    for lineas, numero in ((sueldo, "00001"), (zona, "00002")):
+        assert all(len(l) == LARGOS[l[:2]] for l in lineas)
+        assert lineas[0][22:27] == numero and lineas[0][-6:] == "000001"
+        assert next(l for l in lineas if l[:2] == "04")[62:68] == "106401"   # OSPERYH
+    # Códigos de concepto del contador de los consorcios; cantidades como las suyas, sin unidad.
+    cods = {l[13:23].strip(): l[23:29] for l in sueldo if l[:2] == "03"}
+    assert cods["1011"] == "01000 "                        # 10 horas extra al 50%
+    assert cods["1001"] == "01000 "                        # 10 años de antigüedad
+    assert cods["4001"] == "01100 " and cods["04010"] == "00075 "
+    assert {"1000", "1003", "01005", "01200", "1995", "4004", "4006", "04007"} <= set(cods)
+    assert "1016" not in cods
+    assert "1016" in {l[13:23].strip() for l in zona if l[:2] == "03"}
+
+    b1, b2 = (_bases(next(l for l in x if l[:2] == "04")) for x in (sueldo, zona))
+    for b, lineas in ((b1, sueldo), (b2, zona)):
+        # La remuneración bruta no lleva el redondeo del neto (5998), como el contador.
+        haberes = sum(_importe(l, 30, 44) for l in lineas
+                      if l[:2] == "03" and l[44] == "C" and l[13:23].strip() != "5998")
+        assert b[1] == b[4] == b[8] == b[9] == b["bruta"] == haberes
+        assert b[10] == b["detraccion"] == 0
+
+    # Cada consorcio puede pisar códigos (en uno el 01002 es la antigüedad, en otro el plus pileta).
+    client.post(f"/empresas/{e}/arca", data={"tipo_empleador": "1", "actividad": "000", "zona": "01",
+                                              "codigos": "ANT=01002\nhe50 = 1012"})
+    sueldo = client.get(f"/api/empresas/{e}/arca/2026-09.txt?tipo=mensual").data.decode().split("\r\n")
+    cods = {l[13:23].strip() for l in sueldo if l[:2] == "03"}
+    assert {"01002", "1012"} <= cods and not {"1001", "1011"} & cods
+    conceptos = client.get(f"/api/empresas/{e}/arca/conceptos.txt").data.decode("cp1252")
+    assert any(l[6:16].strip() == "01002" and l[:6] == "160001" for l in conceptos.split("\r\n"))
+    r = client.post(f"/empresas/{e}/arca", data={"tipo_empleador": "1", "actividad": "000", "zona": "01",
+                                                  "codigos": "ANT 01002"}, follow_redirects=True)
+    assert "CONCEPTO=CÓDIGO" in r.text
+
+    # Cada liquidación se baja también suelta (desde el listado de recibos de ese tipo).
+    r = client.get(f"/api/empresas/{e}/arca/2026-09.txt?tipo=zona_fria")
+    assert r.mimetype == "text/plain" and "LSD_30712345671_202609_2_zona_fria.txt" in r.headers["Content-Disposition"]
+    assert r.data.decode("cp1252").split("\r\n")[:-1] == zona
+    assert client.get(f"/api/empresas/{e}/arca/2026-09.txt?tipo=sac").status_code == 400
 
 
 def test_sin_liquidaciones_no_hay_archivo(client):
