@@ -9,6 +9,8 @@ https://www.arca.gob.ar/LibrodeSueldosDigital (ayuda > Diseños):
 - Liquidación ("Diseño de interfaz - liquidación"): un registro '01' del envío y, por trabajador,
   un '02' (datos del pago), un '03' por concepto del recibo y un '04' (datos para el F.931 con
   las nueve bases imponibles más la 10). Se sube en "Liquidaciones > Importar desde archivo".
+  Va una liquidación por recibo (el sueldo es la 1; la zona fría aparte, la 2...): ARCA suma
+  las bases de todas para el F.931, como en los TXT reales de los consorcios de sep-2026.
 """
 from dataclasses import dataclass, field
 from datetime import date
@@ -135,6 +137,9 @@ class Trabajador:
     cbu: str = ""
     cantidades: dict = field(default_factory=dict)   # código -> cantidad (horas, días)
     propios: dict = field(default_factory=dict)      # conceptos del usuario: código -> ConceptoArca
+    # La detracción y los días van una sola vez por mes: en la primera liquidación del trabajador
+    # (el sueldo). En las otras del mismo período (zona fría aparte, aguinaldo) van en cero.
+    principal: bool = True
 
 
 def _alfa(valor: str, largo: int) -> str:
@@ -203,8 +208,10 @@ def bases(t: Trabajador) -> dict:
             b[n] += importe
     for n in (4, 8):
         b[n] = (b[n] * t.factor_obra_social).quantize(Decimal("0.01"))
-    detraccion = (DETRACCION_LEY_27541 * min(t.jornada_horas, 8) / 8).quantize(Decimal("0.01"))
-    detraccion = min(detraccion, b[3])
+    detraccion = Decimal("0")
+    if t.principal:
+        detraccion = (DETRACCION_LEY_27541 * min(t.jornada_horas, 8) / 8).quantize(Decimal("0.01"))
+        detraccion = min(detraccion, b[3])
     b[10] = b[3] - detraccion
     return {"bases": b, "bruta": bruta, "detraccion": detraccion}
 
@@ -244,7 +251,7 @@ def _registro_04(t: Trabajador, *, tipo_empleador: str, actividad: str, zona: st
              + _alfa(tipo_empleador, 1) + "0" + SITUACION_ACTIVO + CONDICION + _alfa(actividad, 3)
              + modalidad + "00" + _alfa(zona, 2)
              + SITUACION_ACTIVO + "01" + "00" + "00" + "00" + "00"       # situación de revista 1 a 3
-             + _num(t.dias_trabajados, 2) + _num(0, 3)
+             + _num(t.dias_trabajados if t.principal else 0, 2) + _num(0, 3)
              + _importe(Decimal("0"), 5) + _importe(Decimal("0"), 5)      # % aporte adicional / tarea dif.
              + _alfa(t.obra_social, 6) + _num(0, 2)
              + _importe(Decimal("0")) * 5                                  # adicionales OS y bases dif.

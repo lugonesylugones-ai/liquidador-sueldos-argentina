@@ -916,11 +916,19 @@ def _extras_arca(d: dict) -> dict:
     return datos
 
 
-def _conceptos_del_periodo(conn, emp, periodo_: str) -> tuple[list, dict, date, int]:
-    """Suma por código los conceptos de todos los recibos del trabajador en el período
-    (sueldo, zona fría aparte, aguinaldo, liquidación final): el F.931 es uno por mes."""
-    filas = conn.execute("SELECT tipo, fecha_pago, resultado FROM liquidaciones WHERE empleado_id = ? "
-                         "AND periodo = ?", (emp["id"], periodo_)).fetchall()
+# Una liquidación del Libro de Sueldos Digital por recibo, numeradas en este orden dentro del mes.
+# El sueldo y la liquidación final van juntos: un trabajador tiene uno u otro.
+LIQUIDACIONES_ARCA = ((("mensual", "final"), "sueldos"), (("zona_fria",), "zona_fria"),
+                      (("sac",), "aguinaldo"), (("sac_zona_fria",), "aguinaldo_zona_fria"))
+
+
+def _conceptos_del_periodo(conn, emp, periodo_: str, tipos) -> tuple[list, dict, date, int] | None:
+    """Suma por código los conceptos de los recibos del trabajador de esos tipos en el período."""
+    filas = conn.execute(f"SELECT tipo, fecha_pago, resultado FROM liquidaciones WHERE empleado_id = ? "
+                         f"AND periodo = ? AND tipo IN ({', '.join('?' * len(tipos))})",
+                         (emp["id"], periodo_, *tipos)).fetchall()
+    if not filas:
+        return None
     sumas, cantidades, dias = {}, {}, 30
     pago = max(date.fromisoformat(f["fecha_pago"]) for f in filas)
     mes = int(periodo_[5:])
@@ -952,37 +960,55 @@ def _dias_sac(emp, periodo_: str, liq: Liquidacion) -> int:
     return (hasta - desde).days + 1
 
 
-def archivo_arca(conn, empresa_id: int, periodo_: str) -> tuple[str, str]:
-    """TXT de la liquidación del período para importar en el Libro de Sueldos Digital."""
+def archivos_arca(conn, empresa_id: int, periodo_: str, tipo: str | None = None) -> list[tuple[str, str]]:
+    """TXT del período para importar en el Libro de Sueldos Digital: uno por liquidación (sueldos,
+    zona fría aparte, aguinaldo), numerados 1, 2... `tipo`: solo la liquidación de ese tipo de recibo."""
     emp_empresa = empresa(conn, empresa_id)
     if emp_empresa is None:
         raise ErrorDatos("La empresa no existe")
-    trabajadores = []
-    for emp in conn.execute(
-            """SELECT DISTINCT e.* FROM empleados e JOIN liquidaciones l ON l.empleado_id = e.id
-               WHERE e.empresa_id = ? AND l.periodo = ? ORDER BY e.apellido, e.nombre""",
-            (empresa_id, periodo_)):
-        conceptos, cantidades, pago, dias = _conceptos_del_periodo(conn, emp, periodo_)
-        datos = arca_empleado(emp)
-        # Comercio en jornada parcial: la obra social va sobre la jornada completa (art. 92 ter LCT).
-        factor = (Decimal(8) / emp["jornada_horas"]
-                  if emp["convenio"] == CONVENIO_COMERCIO and emp["jornada_horas"] < 8 else Decimal("1"))
-        trabajadores.append(arca.Trabajador(
-            cuil=emp["cuil"], legajo=emp["legajo"] or "", jornada_horas=emp["jornada_horas"],
-            obra_social=datos["obra_social"], fecha_pago=pago, conceptos=conceptos, dias_trabajados=dias,
-            factor_obra_social=factor, conyuge=datos["conyuge"], hijos=datos["hijos"], cbu=datos["cbu"],
-            cantidades=cantidades, propios=_propios_arca(conn, emp["convenio"])))
-    if not trabajadores:
-        raise ErrorDatos(f"No hay recibos liquidados en {periodo_}")
+    empleados_ = conn.execute(
+        """SELECT DISTINCT e.* FROM empleados e JOIN liquidaciones l ON l.empleado_id = e.id
+           WHERE e.empresa_id = ? AND l.periodo = ? ORDER BY e.apellido, e.nombre""",
+        (empresa_id, periodo_)).fetchall()
     codigos = datos_arca(conn, empresa_id)
-    try:
-        texto = arca.archivo_liquidacion(
-            cuit_empleador=emp_empresa["cuit"], periodo=periodo_, trabajadores=trabajadores,
-            tipo_empleador=codigos["tipo_empleador"], actividad=codigos["actividad"], zona=codigos["zona"])
-    except arca.ErrorArca as exc:
-        raise ErrorDatos(str(exc))
     cuit_ = "".join(c for c in emp_empresa["cuit"] if c.isdigit())
-    return texto, f"LSD_{cuit_}_{periodo_.replace('-', '')}.txt"
+    archivos, ya_informados = [], set()
+    for tipos, nombre in LIQUIDACIONES_ARCA:
+        trabajadores = []
+        for emp in empleados_:
+            del_periodo = _conceptos_del_periodo(conn, emp, periodo_, tipos)
+            if del_periodo is None:
+                continue
+            conceptos, cantidades, pago, dias = del_periodo
+            datos = arca_empleado(emp)
+            # Comercio en jornada parcial: la obra social va sobre la jornada completa (art. 92 ter LCT).
+            factor = (Decimal(8) / emp["jornada_horas"]
+                      if emp["convenio"] == CONVENIO_COMERCIO and emp["jornada_horas"] < 8 else Decimal("1"))
+            trabajadores.append(arca.Trabajador(
+                cuil=emp["cuil"], legajo=emp["legajo"] or "", jornada_horas=emp["jornada_horas"],
+                obra_social=datos["obra_social"], fecha_pago=pago, conceptos=conceptos, dias_trabajados=dias,
+                factor_obra_social=factor, conyuge=datos["conyuge"], hijos=datos["hijos"], cbu=datos["cbu"],
+                cantidades=cantidades, propios=_propios_arca(conn, emp["convenio"]),
+                principal=emp["id"] not in ya_informados))
+            ya_informados.add(emp["id"])
+        if not trabajadores:
+            continue
+        numero = len(archivos) + 1
+        try:
+            texto = arca.archivo_liquidacion(
+                cuit_empleador=emp_empresa["cuit"], periodo=periodo_, trabajadores=trabajadores, numero=numero,
+                tipo_empleador=codigos["tipo_empleador"], actividad=codigos["actividad"], zona=codigos["zona"])
+        except arca.ErrorArca as exc:
+            raise ErrorDatos(str(exc))
+        nombre_archivo = f"LSD_{cuit_}_{periodo_.replace('-', '')}_{numero}_{nombre}.txt"
+        archivos.append((texto, nombre_archivo, tipos))
+    if not archivos:
+        raise ErrorDatos(f"No hay recibos liquidados en {periodo_}")
+    if tipo is not None:
+        archivos = [a for a in archivos if tipo in a[2]]
+        if not archivos:
+            raise ErrorDatos(f"No hay recibos de ese tipo en {periodo_}")
+    return [(texto, nombre_archivo) for texto, nombre_archivo, _ in archivos]
 
 
 def archivo_conceptos_arca(conn, empresa_id: int) -> tuple[str, str]:

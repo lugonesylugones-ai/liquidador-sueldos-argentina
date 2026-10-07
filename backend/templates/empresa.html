@@ -25,7 +25,7 @@
         <td class="num">{{ l.recibos }}</td><td class="num">$ {{ l.neto|pesos }}</td>
         <td><a href="{{ url_for('web.liquidaciones', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Ver</a> ·
             <a href="{{ url_for('api.recibos_empresa', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">PDF</a>
-            {% if l.tipo == 'mensual' %} · <a href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=l.periodo) }}">Libro de Sueldos Digital</a>{% endif %}</td>
+            · <a href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=l.periodo, tipo=l.tipo) }}">Libro de Sueldos Digital</a></td>
         <td>{% if nuevo_periodo %}
           <form method="post" action="{{ url_for('web.cerrar_periodo', empresa_id=empresa.id, periodo=l.periodo) }}" style="margin:0">
           {% if l.periodo in cerrados %}<span class="chip">Cerrado</span>
@@ -46,7 +46,7 @@
       <label>Período <select name="periodo">
         {% for l in mensuales %}<option value="{{ l.periodo }}">{{ l.periodo }}</option>{% endfor %}
       </select></label>
-      <a class="boton" id="bajar-lsd" href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=mensuales[0].periodo) }}">Bajar archivo del mes (TXT)</a>
+      <a class="boton" id="bajar-lsd" href="{{ url_for('api.archivo_arca', empresa_id=empresa.id, periodo=mensuales[0].periodo) }}">Bajar archivo del mes</a>
       <a class="boton sec" href="{{ url_for('api.conceptos_arca', empresa_id=empresa.id) }}">Bajar conceptos (TXT)</a>
     </div>
   </form>
@@ -55,7 +55,7 @@
   {% endif %}
   <ol class="muted" style="margin:12px 0 0; padding-left:20px">
     <li>La primera vez, en ARCA entrá a Libro de Sueldos Digital &gt; Parametrización de conceptos &gt; Importar, y subí el archivo de <strong>conceptos</strong>.</li>
-    <li>Cada mes, en Libro de Sueldos Digital &gt; Liquidaciones &gt; Importar desde archivo, subí el <strong>archivo del mes</strong>. Con eso ARCA arma el F.931.</li>
+    <li>Cada mes, en Libro de Sueldos Digital &gt; Liquidaciones &gt; Importar desde archivo, subí el <strong>archivo del mes</strong>. Con eso ARCA arma el F.931. Si el mes tiene zona fría o aguinaldo en recibo aparte, se baja un ZIP con un TXT por liquidación (1 sueldos, 2 zona fría...): importalos todos, en orden.</li>
   </ol>
   <details style="margin-top:14px">
     <summary>Códigos del empleador para ARCA{% if not arca.cargados %} (sin confirmar){% endif %}</summary>

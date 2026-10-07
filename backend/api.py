@@ -1,5 +1,6 @@
 """API JSON del liquidador, bajo /api. La lógica vive en `servicios`."""
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from flask import Blueprint, abort, jsonify, request, send_file
 
@@ -192,9 +193,20 @@ def _txt(contenido: str, nombre: str):
 
 @bp.get("/empresas/<int:empresa_id>/arca/<periodo>.txt")
 def archivo_arca(empresa_id: int, periodo: str):
-    """Liquidación del período para importar en el Libro de Sueldos Digital (arma el F.931)."""
+    """Liquidaciones del período para importar en el Libro de Sueldos Digital (arman el F.931).
+    Una sola: el TXT. Varias (zona fría o aguinaldo en recibo aparte): un ZIP con un TXT por
+    liquidación. `?tipo=zona_fria` (o mensual, sac...): solo el TXT de esa liquidación."""
     _empresa_o_404(empresa_id)
-    return _txt(*sv.archivo_arca(get_db(), empresa_id, periodo))
+    archivos = sv.archivos_arca(get_db(), empresa_id, periodo, request.args.get("tipo") or None)
+    if len(archivos) == 1:
+        return _txt(*archivos[0])
+    zip_ = BytesIO()
+    with ZipFile(zip_, "w", ZIP_DEFLATED) as z:
+        for contenido, nombre in archivos:
+            z.writestr(nombre, contenido.encode("cp1252", errors="replace"))
+    zip_.seek(0)
+    return send_file(zip_, mimetype="application/zip", as_attachment=True,
+                     download_name="_".join(archivos[0][1].split("_")[:3]) + ".zip")
 
 
 @bp.get("/empresas/<int:empresa_id>/arca/conceptos.txt")
